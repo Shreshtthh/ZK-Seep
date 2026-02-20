@@ -1,4 +1,4 @@
-# 🃏 ZK Seep — Zero-Knowledge Card Game on Stellar
+# 🃏 ZK Seep - Zero-Knowledge Card Game on Stellar
 
 > *Bringing South Asia's most popular card game to blockchain, with zero-knowledge proofs to eliminate the cheating that plagues existing platforms.*
 
@@ -8,19 +8,19 @@
 
 ## The Problem
 
-**Seep** (also called *Sweep*) is a trick-taking card game played by **100M+ people** across India, Pakistan, and the South Asian diaspora. On Google Play, Seep apps have **100,000+ downloads** — but dig into the reviews and you'll find a recurring theme:
+**Seep** (also called *Sweep*) is a trick-taking card game played by **100M+ people** across India, Pakistan, and the South Asian diaspora. On Google Play, Seep apps have **100,000+ downloads** - but dig into the reviews and you'll find a recurring theme:
 
 > ⭐ *"The bot always knows my cards"*
 > ⭐ *"They bid 13 without even having a King"*
-> ⭐ *"Rigged — the AI cheats every single time"*
+> ⭐ *"Rigged - the AI cheats every single time"*
 
 The core problem is **information asymmetry**. In physical Seep, you trust that your opponent can't see your hand. In digital Seep, the server sees everything. Bots exploit this by:
 
-- **Bidding cards they don't hold** — a player bids 13 (King) when they have no King, but they know *you* don't have one either
-- **Building houses on phantom cards** — creating a house of value 11 when they don't hold a Jack, knowing the remaining Jacks are buried in the deck
-- **Perfect information play** — the server-side AI sees both hands and the deck order, making optimal plays that are statistically impossible for a fair player
+- **Bidding cards they don't hold** - a player bids 13 (King) when they have no King, but they know *you* don't have one either
+- **Building houses on phantom cards** - creating a house of value 11 when they don't hold a Jack, knowing the remaining Jacks are buried in the deck
+- **Perfect information play** - the server-side AI sees both hands and the deck order, making optimal plays that are statistically impossible for a fair player
 
-**ZK Seep solves this.** By enforcing zero-knowledge proofs on-chain, every bid and every house-building move cryptographically proves the player holds the card they claim — without revealing what else is in their hand.
+**ZK Seep solves this.** By enforcing zero-knowledge proofs on-chain, every bid and every house-building move cryptographically proves the player holds the card they claim - without revealing what else is in their hand.
 
 ---
 
@@ -28,8 +28,8 @@ The core problem is **information asymmetry**. In physical Seep, you trust that 
 
 In Seep, there are two critical moments where a player claims to hold a specific card:
 
-1. **Bidding** — "I bid 11" means "I have a Jack (value ≥ 9) in my hand"
-2. **House building** — "I build a house of value 12" means "I have a Queen in my hand to claim it later"
+1. **Bidding** - "I bid 11" means "I have a Jack (value ≥ 9) in my hand"
+2. **House building** - "I build a house of value 12" means "I have a Queen in my hand to claim it later"
 
 Without ZK proofs, the server (or opponent in P2P) must trust these claims blindly. With ZK proofs:
 
@@ -49,7 +49,7 @@ Without ZK proofs, the server (or opponent in P2P) must trust these claims blind
 └─────────────────────────────────────────────────────┘
 ```
 
-The player commits a **Poseidon2 hash** of their hand at the start of the game. For every bid and house move, they generate a ZK proof showing "my hand contains a card of this value" — verified against the committed hash. **No one — not the opponent, not the server, not the blockchain — ever sees the actual hand.**
+The player commits a **Poseidon2 hash** of their hand at the start of the game. For every bid and house move, they generate a ZK proof showing "my hand contains a card of this value" - verified against the committed hash. **No one - not the opponent, not the server, not the blockchain - ever sees the actual hand.**
 
 ---
 
@@ -73,15 +73,15 @@ Seep is a 2-player card game using a standard 52-card deck. The objective is to 
 
 ```mermaid
 flowchart TD
-    A["🃏 Deal 4 cards each\n4 cards to floor"] --> B["💰 Bidding Phase"]
-    B --> C{"Player 1 bids\n9, 10, 11, 12, or 13"}
-    C --> D["🏠 Bid Move\nMust play the bid card"]
-    D --> E["♠️ Play Phase\nAlternate turns"]
+    A["🃏 Deal 4 cards each<br/>4 cards to floor"] --> B["💰 Bidding Phase"]
+    B --> C{"Player 1 bids<br/>9, 10, 11, 12, or 13"}
+    C --> D["🏠 Bid Move<br/>Must play the bid card"]
+    D --> E["♠️ Play Phase<br/>Alternate turns"]
     E --> F{"Hand empty?"}
-    F -->|Yes| G{"Cards left\nin deck?"}
-    G -->|Yes| H["Deal 4 more\ncards each"]
+    F -->|Yes| G{"Cards left<br/>in deck?"}
+    G -->|Yes| H["Deal 4 more<br/>cards each"]
     H --> E
-    G -->|No| I["🏆 Score & Determine Winner"]
+    G -->|No| I["🏆 Score and Determine Winner"]
 
     style A fill:#1a1a2e,color:#eee
     style B fill:#16213e,color:#eee
@@ -109,7 +109,7 @@ On each turn, a player plays one card from their hand. Depending on the floor st
 
 ### Seep Bonus
 
-If you capture **every card on the floor** in a single pickup, that's a **Seep** — worth bonus points equal to the bid value. But three Seeps in one game cancels all your Seep bonuses!
+If you capture **every card on the floor** in a single pickup, that's a **Seep** - worth bonus points equal to the bid value. But three Seeps in one game cancels all your Seep bonuses!
 
 ---
 
@@ -117,24 +117,24 @@ If you capture **every card on the floor** in a single pickup, that's a **Seep**
 
 ```mermaid
 graph TB
-    subgraph Browser["Browser (React + TypeScript)"]
-        UI["Game UI\nZkSeepGame.tsx"]
-        Engine["Local Game Engine\nSeepGame.ts"]
-        Peer["PeerJS Service\nWebRTC P2P"]
-        Session["Session Wallet\nKeypair in sessionStorage"]
-        ZkProof["ZK Proof Generator\nNoir / Barretenberg"]
-        OnChain["On-Chain Hook\nuseOnChain.ts"]
+    subgraph Browser["Browser - React + TypeScript"]
+        UI["Game UI<br/>ZkSeepGame.tsx"]
+        Engine["Local Game Engine<br/>SeepGame.ts"]
+        Peer["PeerJS Service<br/>WebRTC P2P"]
+        Session["Session Wallet<br/>Keypair in sessionStorage"]
+        ZkProof["ZK Proof Generator<br/>Noir / Barretenberg"]
+        OnChain["On-Chain Hook<br/>useOnChain.ts"]
     end
 
     subgraph Stellar["Stellar Network"]
-        ZkSeep["ZK Seep Contract\nGame state + proof verification"]
-        MockVerifier["Mock Verifier\nalways returns true\n(testnet)"]
-        RealVerifier["UltraHonk Verifier\nfull ZK verification\n(localnet)"]
-        GameHub["Game Hub Contract\nPoints + leaderboard"]
+        ZkSeep["ZK Seep Contract<br/>Game state + proof verification"]
+        MockVerifier["Mock Verifier<br/>always returns true<br/>testnet"]
+        RealVerifier["UltraHonk Verifier<br/>full ZK verification<br/>localnet"]
+        GameHub["Game Hub Contract<br/>Points + leaderboard"]
     end
 
     subgraph Circuit["Noir Circuit"]
-        HC["hand_contains\nPoseidon2 hash + membership"]
+        HC["hand_contains<br/>Poseidon2 hash + membership"]
     end
 
     UI --> Engine
@@ -148,7 +148,7 @@ graph TB
     ZkProof --> HC
     OnChain --> ZkProof
 
-    Peer <-->|"WebRTC\nseed, bids, moves"| Peer
+    Peer <-->|"WebRTC<br/>seed, bids, moves"| Peer
 
     style Browser fill:#0d1117,color:#c9d1d9,stroke:#30363d
     style Stellar fill:#1a1a2e,color:#eee,stroke:#533483
@@ -162,12 +162,12 @@ graph TB
 | Component | Purpose |
 |---|---|
 | **ZK Seep Contract** (`contracts/zk-seep`) | On-chain game state, turn validation, ZK proof verification via external verifier |
-| **Mock Verifier** (`contracts/mock-verifier`) | Always returns `true` — used on testnet where UltraHonk exceeds the 400M CPU instruction cap |
+| **Mock Verifier** (`contracts/mock-verifier`) | Always returns `true` - used on testnet where UltraHonk exceeds the 400M CPU instruction cap |
 | **Game Hub** | Points tracking and leaderboard across all games in the Stellar Game Studio |
 | **Noir Circuit** (`circuits/hand_contains`) | Poseidon2 hash commitment + card membership proof |
-| **Game Engine** (`src/game/`) | Full Seep rule engine in TypeScript — move generation, validation, scoring |
+| **Game Engine** (`src/game/`) | Full Seep rule engine in TypeScript - move generation, validation, scoring |
 | **PeerJS Service** | WebRTC peer-to-peer for real cross-device multiplayer |
-| **Session Wallet** | Ephemeral Stellar keypair — signs game transactions silently without wallet popups |
+| **Session Wallet** | Ephemeral Stellar keypair - signs game transactions silently without wallet popups |
 | **On-Chain Hook** | Fires `start_game`, `make_bid`, `make_move`, `end_game` to the contract during gameplay |
 
 ---
@@ -235,7 +235,7 @@ fn main(
 }
 ```
 
-**Why Poseidon2?** It's a ZK-friendly hash function — ~100x cheaper to prove inside a circuit compared to SHA-256 or Keccak.
+**Why Poseidon2?** It's a ZK-friendly hash function - ~100x cheaper to prove inside a circuit compared to SHA-256 or Keccak.
 
 ---
 
@@ -247,7 +247,7 @@ fn main(
 | **Localnet** (`--limits unlimited`) | Real UltraHonk Verifier | ~367M | ✅ Works |
 | **Mainnet** | Real Verifier | Needs 400M+ cap | ⏳ Waiting for limit increase |
 
-The Stellar testnet currently has a **400M CPU instruction cap** per transaction. UltraHonk proof verification requires ~367M instructions for even a basic proof — dangerously close to the limit. Per hackathon organizer guidance, **local deployment with `--limits unlimited` is accepted** for evaluation.
+The Stellar testnet currently has a **400M CPU instruction cap** per transaction. UltraHonk proof verification requires ~367M instructions for even a basic proof - dangerously close to the limit. Per hackathon organizer guidance, **local deployment with `--limits unlimited` is accepted** for evaluation.
 
 The mock verifier allows us to demonstrate the full transaction flow on testnet while the real verifier runs on localnet.
 
@@ -276,7 +276,7 @@ ZK Seep uses **PeerJS** (WebRTC) for peer-to-peer multiplayer:
 - Player 1 creates a room → gets a room code
 - Player 2 enters the room code on their device
 - Game seed, bids, and moves are exchanged directly between browsers
-- No central server required — fully decentralized
+- No central server required - fully decentralized
 
 Both players run the same deterministic game engine with the same seed. Move indices are exchanged, so both engines stay perfectly synchronized.
 
@@ -289,7 +289,7 @@ Both players run the same deterministic game engine with the same seed. Move ind
 | Factor | Detail |
 |---|---|
 | **100M+ players** | Seep is the #1 card game in Punjab and widely played across South Asia |
-| **Stellar's India push** | SDF is actively expanding in India — Seep brings a massive ready-made audience |
+| **Stellar's India push** | SDF is actively expanding in India - Seep brings a massive ready-made audience |
 | **Cheating epidemic** | Every major Seep app on Play Store is plagued by cheating complaints |
 | **ZK is the solution** | Zero-knowledge proofs make cheating mathematically impossible |
 | **Low fees** | Stellar's ~0.00001 XLM tx fees make per-move on-chain verification viable |
@@ -378,7 +378,7 @@ bun run scripts/deploy.ts --network local
 Stellar-Game-Studio/
 ├── contracts/
 │   ├── zk-seep/              # Main game contract (Rust/Soroban)
-│   │   └── src/lib.rs         # 689 lines — game state, turns, ZK verification
+│   │   └── src/lib.rs         # 689 lines - game state, turns, ZK verification
 │   ├── mock-verifier/         # Always-true verifier for testnet
 │   └── mock-game-hub/         # Points tracking contract
 ├── circuits/
@@ -411,15 +411,15 @@ Stellar-Game-Studio/
 
 This is not a weekend hackathon project. ZK Seep includes:
 
-- ✅ **Complete Seep game engine** — all 7 move types, house limits, seep bonuses, multi-round dealing
-- ✅ **ZK circuit** — Noir circuit with Poseidon2 hash commitment + card membership proof
-- ✅ **On-chain game contract** — 689 lines of Rust, full game lifecycle with ZK proof enforcement
-- ✅ **Cross-device multiplayer** — PeerJS WebRTC, no central server
-- ✅ **Embedded session wallet** — zero popup fatigue, Web2-like UX
-- ✅ **Mock verifier** — enables full testnet demo within CPU limits
-- ✅ **Game Hub integration** — start_game / end_game for points and leaderboard
-- ✅ **Beautiful UI** — dark theme, card animations, responsive design
-- ✅ **Live deployment** — playable at [zk-seep.vercel.app](https://zk-seep.vercel.app)
+- ✅ **Complete Seep game engine** - all 7 move types, house limits, seep bonuses, multi-round dealing
+- ✅ **ZK circuit** - Noir circuit with Poseidon2 hash commitment + card membership proof
+- ✅ **On-chain game contract** - 689 lines of Rust, full game lifecycle with ZK proof enforcement
+- ✅ **Cross-device multiplayer** - PeerJS WebRTC, no central server
+- ✅ **Embedded session wallet** - zero popup fatigue, Web2-like UX
+- ✅ **Mock verifier** - enables full testnet demo within CPU limits
+- ✅ **Game Hub integration** - start_game / end_game for points and leaderboard
+- ✅ **Beautiful UI** - dark theme, card animations, responsive design
+- ✅ **Live deployment** - playable at [zk-seep.vercel.app](https://zk-seep.vercel.app)
 
 ---
 
