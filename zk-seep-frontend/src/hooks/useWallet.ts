@@ -6,8 +6,20 @@ import {
   signAuthEntry as freighterSignAuthEntry,
   isConnected as freighterIsConnected,
 } from '@stellar/freighter-api';
-import { NETWORK, NETWORK_PASSPHRASE } from '../utils/constants';
+import { NETWORK, NETWORK_PASSPHRASE, RPC_URL } from '../utils/constants';
 import type { ContractSigner } from '../types/signer';
+import {
+  Keypair,
+  TransactionBuilder,
+  Networks,
+  Operation,
+  Account,
+  xdr,
+  rpc,
+} from '@stellar/stellar-sdk';
+import { Buffer } from 'buffer';
+
+const SESSION_WALLET_KEY = 'zk-seep-session-wallet';
 
 export function useWallet() {
   const {
@@ -98,6 +110,126 @@ export function useWallet() {
     };
   }, [isConnected, publicKey]);
 
+  /**
+   * Create (or load) an ephemeral session wallet.
+   * Generates a random Keypair and stores the secret in sessionStorage.
+   * Returns the public key.
+   */
+  const createSessionWallet = useCallback((): string => {
+    // Check if we already have one
+    const existing = sessionStorage.getItem(SESSION_WALLET_KEY);
+    if (existing) {
+      try {
+        const kp = Keypair.fromSecret(existing);
+        console.log('[session-wallet] Loaded existing:', kp.publicKey());
+        return kp.publicKey();
+      } catch {
+        sessionStorage.removeItem(SESSION_WALLET_KEY);
+      }
+    }
+
+    const kp = Keypair.random();
+    sessionStorage.setItem(SESSION_WALLET_KEY, kp.secret());
+    console.log('[session-wallet] Created new:', kp.publicKey());
+    return kp.publicKey();
+  }, []);
+
+  /**
+   * Get the session wallet public key (if one exists).
+   */
+  const getSessionPublicKey = useCallback((): string | null => {
+    const secret = sessionStorage.getItem(SESSION_WALLET_KEY);
+    if (!secret) return null;
+    try {
+      return Keypair.fromSecret(secret).publicKey();
+    } catch {
+      return null;
+    }
+  }, []);
+
+  /**
+   * Get a ContractSigner that signs silently using the session wallet.
+   * No Freighter popups — used for in-game transactions.
+   */
+  const getSessionSigner = useCallback((): ContractSigner => {
+    const secret = sessionStorage.getItem(SESSION_WALLET_KEY);
+    if (!secret) throw new Error('Session wallet not created');
+    const kp = Keypair.fromSecret(secret);
+
+    return {
+      signTransaction: async (txXdr: string) => {
+        const tx = TransactionBuilder.fromXDR(txXdr, NETWORK_PASSPHRASE);
+        tx.sign(kp);
+        return { signedTxXdr: tx.toXDR() };
+      },
+
+      signAuthEntry: async (authEntryXdr: string) => {
+        // Sign the auth entry preimage with the session keypair
+        const preimage = xdr.HashIdPreimage.fromXDR(authEntryXdr, 'base64');
+        const payload = preimage.toXDR();
+        const signature = kp.sign(payload);
+        return {
+          signedAuthEntry: signature.toString('base64'),
+          signerAddress: kp.publicKey(),
+        };
+      },
+    };
+  }, []);
+
+  /**
+   * Fund the session wallet by sending XLM from the connected Freighter wallet.
+   * This is the ONE transaction that requires user approval via Freighter.
+   */
+  const fundSessionWallet = useCallback(async (amountXlm: string = '10'): Promise<void> => {
+    if (!publicKey) throw new Error('Freighter wallet not connected');
+
+    const sessionPubKey = getSessionPublicKey();
+    if (!sessionPubKey) throw new Error('Session wallet not created');
+
+    const server = new rpc.Server(RPC_URL);
+    const sourceAccount = await server.getAccount(publicKey);
+
+    const tx = new TransactionBuilder(sourceAccount, {
+      fee: '100',
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        Operation.createAccount({
+          destination: sessionPubKey,
+          startingBalance: amountXlm,
+        })
+      )
+      .setTimeout(30)
+      .build();
+
+    // Sign with Freighter (user approves once)
+    const { signedTxXdr, error: signError } = await freighterSignTransaction(
+      tx.toXDR(),
+      { networkPassphrase: NETWORK_PASSPHRASE, address: publicKey }
+    );
+    if (signError) throw new Error(`Failed to sign funding tx: ${signError.message}`);
+
+    const signedTx = TransactionBuilder.fromXDR(signedTxXdr, NETWORK_PASSPHRASE);
+    const result = await server.sendTransaction(signedTx as any);
+
+    if (result.status === 'ERROR') {
+      throw new Error(`Funding transaction failed: ${result.status}`);
+    }
+
+    // Wait for confirmation
+    let getResult = await server.getTransaction(result.hash);
+    while (getResult.status === 'NOT_FOUND') {
+      await new Promise(r => setTimeout(r, 1000));
+      getResult = await server.getTransaction(result.hash);
+    }
+
+    if (getResult.status === 'FAILED') {
+      throw new Error('Funding transaction failed on-chain');
+    }
+
+    console.log('[session-wallet] Funded with', amountXlm, 'XLM');
+  }, [publicKey, getSessionPublicKey]);
+
   return {
     // State
     publicKey,
@@ -113,5 +245,11 @@ export function useWallet() {
     connectFreighter,
     disconnect,
     getContractSigner,
+
+    // Session wallet
+    createSessionWallet,
+    getSessionPublicKey,
+    getSessionSigner,
+    fundSessionWallet,
   };
 }

@@ -11,6 +11,9 @@ import { ScorePanel } from './components/ScorePanel';
 import { BidPanel } from './components/BidPanel';
 import { GameOverPanel } from './components/GameOverPanel';
 import { useWallet } from '@/hooks/useWallet';
+import { useOnChain } from '@/hooks/useOnChain';
+import { peerService } from '@/services/peerService';
+import type { SyncMessage } from '@/services/peerService';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -32,13 +35,6 @@ type UIPhase =
   | 'bidding'
   | 'playing'
   | 'game_over';
-
-/** Messages sent between tabs via BroadcastChannel */
-type SyncMessage =
-  | { type: 'join' }
-  | { type: 'seed'; seed: number }
-  | { type: 'bid'; bidValue: number }
-  | { type: 'move'; moveIdx: number };
 
 /* ---- Persistence ---- */
 const SAVE_KEY = 'zk-seep-game-state';
@@ -110,9 +106,9 @@ function initEngineFromSeed(seed: number): SeepGame {
 export function ZkSeepGame({
   onGameComplete,
 }: ZkSeepGameProps) {
-  const { publicKey, isConnected, isConnecting, connectFreighter } = useWallet();
+  const { publicKey, isConnected, isConnecting, connectFreighter, createSessionWallet, getSessionPublicKey, fundSessionWallet } = useWallet();
+  const { onChainMakeBid, onChainMakeMove, onChainEndGame } = useOnChain();
   const engineRef = useRef<SeepGame | null>(null);
-  const channelRef = useRef<BroadcastChannel | null>(null);
   const seedRef = useRef<number | null>(null);
   const moveLogRef = useRef<number[]>([]);
 
@@ -131,6 +127,8 @@ export function ZkSeepGame({
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [statusType, setStatusType] = useState<'info' | 'warning' | 'error' | 'success'>('info');
   const [loading, setLoading] = useState(false);
+  const [sessionWalletFunded, setSessionWalletFunded] = useState(false);
+  const [sessionWalletAddress, setSessionWalletAddress] = useState<string | null>(null);
 
   /* ---- Derived state ---- */
   const engine = engineRef.current;
@@ -213,27 +211,15 @@ export function ZkSeepGame({
     moveLogRef.current = [];
   }, []);
 
-  /* ---- BroadcastChannel send ---- */
+  /* ---- PeerJS send ---- */
   const broadcast = useCallback((msg: SyncMessage) => {
-    if (channelRef.current) {
-      console.log('[sync] Sending:', msg.type, msg);
-      channelRef.current.postMessage(msg);
-    }
+    peerService.send(msg);
   }, []);
 
-  /* ---- Open channel for a session ---- */
-  const openChannel = useCallback((sid: number) => {
-    if (channelRef.current) channelRef.current.close();
-    const ch = new BroadcastChannel(`zk-seep-${sid}`);
-    channelRef.current = ch;
-    console.log(`[sync] Channel opened: zk-seep-${sid}`);
-    return ch;
-  }, []);
-
-  /* ---- Cleanup channel on unmount ---- */
+  /* ---- Cleanup peer on unmount ---- */
   useEffect(() => {
     return () => {
-      if (channelRef.current) channelRef.current.close();
+      peerService.cleanup();
     };
   }, []);
 
@@ -283,8 +269,8 @@ export function ZkSeepGame({
         setUiPhase('playing');
       }
 
-      // Re-open channel for sync
-      openChannel(saved.sessionId);
+      // Note: PeerJS connection is NOT restored on refresh (peer IDs are ephemeral).
+      // The game state is restored locally but the opponent must reconnect.
       setLobbyMode('creating');
       console.log('[restore] Game restored successfully');
     } catch (err) {
@@ -296,10 +282,7 @@ export function ZkSeepGame({
   /* ---- Quit Game ---- */
   const handleQuit = useCallback(() => {
     clearSavedGame();
-    if (channelRef.current) {
-      channelRef.current.close();
-      channelRef.current = null;
-    }
+    peerService.cleanup();
     engineRef.current = null;
     seedRef.current = null;
     setSessionId(null);
@@ -316,92 +299,113 @@ export function ZkSeepGame({
     try {
       setLoading(true);
       await connectFreighter();
-      showStatus('Wallet connected!', 'success');
+      // Auto-create session wallet after Freighter connect
+      const sessionPub = createSessionWallet();
+      setSessionWalletAddress(sessionPub);
+      showStatus('Wallet connected! Fund your game wallet to play.', 'success');
     } catch (err) {
       showStatus(`Failed to connect: ${err instanceof Error ? err.message : 'error'}`, 'error');
     } finally {
       setLoading(false);
     }
-  }, [connectFreighter, showStatus]);
+  }, [connectFreighter, createSessionWallet, showStatus]);
+
+  /* ---- Fund Session Wallet ---- */
+  const handleFundSessionWallet = useCallback(async () => {
+    try {
+      setLoading(true);
+      showStatus('Funding game wallet... (approve one Freighter popup)', 'info');
+      await fundSessionWallet('10');
+      setSessionWalletFunded(true);
+      showStatus('Game wallet funded! Ready to play.', 'success');
+    } catch (err) {
+      showStatus(`Failed to fund: ${err instanceof Error ? err.message : 'error'}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [fundSessionWallet, showStatus]);
 
   /* ---- Create Game ---- */
-  const handleCreateGame = useCallback(() => {
+  const handleCreateGame = useCallback(async () => {
     if (!publicKey) {
       showStatus('Please connect your wallet first.', 'error');
       return;
     }
 
-    const sid = generateSessionId();
-    const seed = findWorkingSeed();
-    seedRef.current = seed;
+    setLoading(true);
+    try {
+      const sid = generateSessionId();
+      const seed = findWorkingSeed();
+      seedRef.current = seed;
 
-    // Init engine
-    const game = initEngineFromSeed(seed);
-    engineRef.current = game;
-    moveLogRef.current = [];
+      // Init engine
+      const game = initEngineFromSeed(seed);
+      engineRef.current = game;
+      moveLogRef.current = [];
 
-    setSessionId(sid);
-    setMyPlayerIdx(0);
-    setLobbyMode('creating');
+      setSessionId(sid);
+      setMyPlayerIdx(0);
+      setLobbyMode('creating');
 
-    // Open channel and listen for join
-    const ch = openChannel(sid);
-    ch.onmessage = (event: MessageEvent<SyncMessage>) => {
-      const msg = event.data;
-      console.log('[sync] Creator received:', msg.type, msg);
+      // Create PeerJS room and listen for opponent
+      const roomCode = await peerService.createRoom((msg: SyncMessage) => {
+        console.log('[sync] Creator received:', msg.type, msg);
 
-      if (msg.type === 'join') {
-        // Send seed to joiner
-        ch.postMessage({ type: 'seed', seed } as SyncMessage);
-        console.log('[sync] Sent seed to joiner:', seed);
-      } else if (msg.type === 'bid') {
-        // Opponent bid
-        if (engineRef.current) {
-          try {
-            engineRef.current.setBid(msg.bidValue);
-            setSnapshot(getSnapshot(engineRef.current));
-            setUiPhase('playing');
-            showStatus(`Opponent bid ${msg.bidValue}.`, 'info');
-            // Persist after opponent bid
+        if (msg.type === 'join') {
+          // Send seed to joiner
+          peerService.send({ type: 'seed', seed });
+          console.log('[sync] Sent seed to joiner:', seed);
+        } else if (msg.type === 'bid') {
+          // Opponent bid
+          if (engineRef.current) {
             try {
-              const s: SavedGameState = { seed, sessionId: sid, myPlayerIdx: 0, bidValue: msg.bidValue, moveIndices: [...moveLogRef.current] };
-              sessionStorage.setItem(SAVE_KEY, JSON.stringify(s));
-            } catch { /* ignore */ }
-          } catch (err) {
-            console.error('[sync] Failed to apply opponent bid:', err);
-          }
-        }
-      } else if (msg.type === 'move') {
-        // Opponent move — apply the same move by index
-        if (engineRef.current) {
-          try {
-            const allMoves = engineRef.current.getLegalMoves();
-            const move = allMoves[msg.moveIdx];
-            if (!move) throw new Error(`Invalid move index: ${msg.moveIdx}`);
-            engineRef.current.makeMove(move);
-            moveLogRef.current.push(msg.moveIdx);
-            const snap = getSnapshot(engineRef.current);
-            setSnapshot(snap);
-            if (snap.phase === EnginePhase.GameOver) {
-              setUiPhase('game_over');
-              sessionStorage.removeItem(SAVE_KEY);
-            } else {
+              engineRef.current.setBid(msg.bidValue);
+              setSnapshot(getSnapshot(engineRef.current));
+              setUiPhase('playing');
+              showStatus(`Opponent bid ${msg.bidValue}.`, 'info');
               try {
-                const s: SavedGameState = { seed, sessionId: sid, myPlayerIdx: 0, bidValue: engineRef.current.bidValue, moveIndices: [...moveLogRef.current] };
+                const s: SavedGameState = { seed, sessionId: sid, myPlayerIdx: 0, bidValue: msg.bidValue, moveIndices: [...moveLogRef.current] };
                 sessionStorage.setItem(SAVE_KEY, JSON.stringify(s));
               } catch { /* ignore */ }
+            } catch (err) {
+              console.error('[sync] Failed to apply opponent bid:', err);
             }
-            showStatus(`Opponent played ${describeMoveType(move.type)} with ${cardToString(move.card)}`, 'info');
-          } catch (err) {
-            console.error('[sync] Failed to apply opponent move:', err);
+          }
+        } else if (msg.type === 'move') {
+          if (engineRef.current) {
+            try {
+              const allMoves = engineRef.current.getLegalMoves();
+              const move = allMoves[msg.moveIdx];
+              if (!move) throw new Error(`Invalid move index: ${msg.moveIdx}`);
+              engineRef.current.makeMove(move);
+              moveLogRef.current.push(msg.moveIdx);
+              const snap = getSnapshot(engineRef.current);
+              setSnapshot(snap);
+              if (snap.phase === EnginePhase.GameOver) {
+                setUiPhase('game_over');
+                sessionStorage.removeItem(SAVE_KEY);
+              } else {
+                try {
+                  const s: SavedGameState = { seed, sessionId: sid, myPlayerIdx: 0, bidValue: engineRef.current.bidValue, moveIndices: [...moveLogRef.current] };
+                  sessionStorage.setItem(SAVE_KEY, JSON.stringify(s));
+                } catch { /* ignore */ }
+              }
+              showStatus(`Opponent played ${describeMoveType(move.type)} with ${cardToString(move.card)}`, 'info');
+            } catch (err) {
+              console.error('[sync] Failed to apply opponent move:', err);
+            }
           }
         }
-      }
-    };
+      });
 
-    refreshSnapshot();
-    showStatus(`Room created! Code: ${sid}. Share it with your opponent.`, 'success');
-  }, [publicKey, showStatus, openChannel, refreshSnapshot]);
+      refreshSnapshot();
+      showStatus(`Room created! Code: ${roomCode}. Share it with your opponent.`, 'success');
+    } catch (err) {
+      showStatus(`Failed to create room: ${err instanceof Error ? err.message : 'error'}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [publicKey, showStatus, refreshSnapshot]);
 
   /* ---- Start Playing (after room created) ---- */
   const handleStartPlaying = useCallback(() => {
@@ -410,87 +414,87 @@ export function ZkSeepGame({
   }, [showStatus]);
 
   /* ---- Join Game ---- */
-  const handleJoinGame = useCallback(() => {
+  const handleJoinGame = useCallback(async () => {
     if (!publicKey) {
       showStatus('Please connect your wallet first.', 'error');
       return;
     }
     if (!joinCode.trim()) return;
 
-    const sid = parseInt(joinCode.trim(), 10);
-    if (isNaN(sid)) {
-      showStatus('Invalid session code.', 'error');
-      return;
-    }
+    // The room code is the host's PeerJS Peer ID (not a numeric session ID)
+    const roomCode = joinCode.trim();
 
-    setSessionId(sid);
     setMyPlayerIdx(1);
     setLobbyMode('waiting');
+    setLoading(true);
 
-    // Open channel and send join request
-    const ch = openChannel(sid);
-    ch.onmessage = (event: MessageEvent<SyncMessage>) => {
-      const msg = event.data;
-      console.log('[sync] Joiner received:', msg.type, msg);
+    try {
+      await peerService.joinRoom(roomCode, (msg: SyncMessage) => {
+        console.log('[sync] Joiner received:', msg.type, msg);
 
-      if (msg.type === 'seed') {
-        // Init engine with the same seed
-        const game = initEngineFromSeed(msg.seed);
-        engineRef.current = game;
-        seedRef.current = msg.seed;
-        moveLogRef.current = [];
-        setSnapshot(getSnapshot(game));
-        setUiPhase('bidding');
-        showStatus('Connected! Waiting for Player 1 to bid...', 'success');
-      } else if (msg.type === 'bid') {
-        // Opponent bid
-        if (engineRef.current) {
-          try {
-            engineRef.current.setBid(msg.bidValue);
-            setSnapshot(getSnapshot(engineRef.current));
-            setUiPhase('playing');
-            showStatus(`Opponent bid ${msg.bidValue}.`, 'info');
-            // Persist after opponent bid
+        if (msg.type === 'seed') {
+          // Init engine with the same seed
+          const game = initEngineFromSeed(msg.seed);
+          engineRef.current = game;
+          seedRef.current = msg.seed;
+          moveLogRef.current = [];
+          const sid = generateSessionId(); // local session ID for persistence
+          setSessionId(sid);
+          setSnapshot(getSnapshot(game));
+          setUiPhase('bidding');
+          showStatus('Connected! Waiting for Player 1 to bid...', 'success');
+        } else if (msg.type === 'bid') {
+          if (engineRef.current) {
             try {
-              const s: SavedGameState = { seed: seedRef.current!, sessionId: sid, myPlayerIdx: 1, bidValue: msg.bidValue, moveIndices: [...moveLogRef.current] };
-              sessionStorage.setItem(SAVE_KEY, JSON.stringify(s));
-            } catch { /* ignore */ }
-          } catch (err) {
-            console.error('[sync] Failed to apply opponent bid:', err);
-          }
-        }
-      } else if (msg.type === 'move') {
-        // Opponent move — apply the same move by index
-        if (engineRef.current) {
-          try {
-            const allMoves = engineRef.current.getLegalMoves();
-            const move = allMoves[msg.moveIdx];
-            if (!move) throw new Error(`Invalid move index: ${msg.moveIdx}`);
-            engineRef.current.makeMove(move);
-            moveLogRef.current.push(msg.moveIdx);
-            const snap = getSnapshot(engineRef.current);
-            setSnapshot(snap);
-            if (snap.phase === EnginePhase.GameOver) {
-              setUiPhase('game_over');
-              sessionStorage.removeItem(SAVE_KEY);
-            } else {
+              engineRef.current.setBid(msg.bidValue);
+              setSnapshot(getSnapshot(engineRef.current));
+              setUiPhase('playing');
+              showStatus(`Opponent bid ${msg.bidValue}.`, 'info');
               try {
-                const s: SavedGameState = { seed: seedRef.current!, sessionId: sid, myPlayerIdx: 1, bidValue: engineRef.current.bidValue, moveIndices: [...moveLogRef.current] };
+                const s: SavedGameState = { seed: seedRef.current!, sessionId: 0, myPlayerIdx: 1, bidValue: msg.bidValue, moveIndices: [...moveLogRef.current] };
                 sessionStorage.setItem(SAVE_KEY, JSON.stringify(s));
               } catch { /* ignore */ }
+            } catch (err) {
+              console.error('[sync] Failed to apply opponent bid:', err);
             }
-            showStatus(`Opponent played ${describeMoveType(move.type)} with ${cardToString(move.card)}`, 'info');
-          } catch (err) {
-            console.error('[sync] Failed to apply opponent move:', err);
+          }
+        } else if (msg.type === 'move') {
+          if (engineRef.current) {
+            try {
+              const allMoves = engineRef.current.getLegalMoves();
+              const move = allMoves[msg.moveIdx];
+              if (!move) throw new Error(`Invalid move index: ${msg.moveIdx}`);
+              engineRef.current.makeMove(move);
+              moveLogRef.current.push(msg.moveIdx);
+              const snap = getSnapshot(engineRef.current);
+              setSnapshot(snap);
+              if (snap.phase === EnginePhase.GameOver) {
+                setUiPhase('game_over');
+                sessionStorage.removeItem(SAVE_KEY);
+              } else {
+                try {
+                  const s: SavedGameState = { seed: seedRef.current!, sessionId: 0, myPlayerIdx: 1, bidValue: engineRef.current.bidValue, moveIndices: [...moveLogRef.current] };
+                  sessionStorage.setItem(SAVE_KEY, JSON.stringify(s));
+                } catch { /* ignore */ }
+              }
+              showStatus(`Opponent played ${describeMoveType(move.type)} with ${cardToString(move.card)}`, 'info');
+            } catch (err) {
+              console.error('[sync] Failed to apply opponent move:', err);
+            }
           }
         }
-      }
-    };
+      });
 
-    // Request seed from creator
-    ch.postMessage({ type: 'join' } as SyncMessage);
-    showStatus(`Joining session ${sid}...`, 'info');
-  }, [publicKey, joinCode, showStatus, openChannel]);
+      // Request seed from host
+      peerService.send({ type: 'join' });
+      showStatus(`Joining room...`, 'info');
+    } catch (err) {
+      showStatus(`Failed to join: ${err instanceof Error ? err.message : 'error'}`, 'error');
+      setLobbyMode('joining');
+    } finally {
+      setLoading(false);
+    }
+  }, [publicKey, joinCode, showStatus]);
 
   /* ---- Submit bid ---- */
   const handleBid = useCallback((bidValue: number) => {
@@ -506,6 +510,13 @@ export function ZkSeepGame({
       // Broadcast to opponent
       broadcast({ type: 'bid', bidValue });
 
+      // Fire-and-forget on-chain bid
+      if (sessionId) {
+        onChainMakeBid(sessionId, bidValue).catch(e =>
+          console.warn('[on-chain] bid failed (non-blocking):', e)
+        );
+      }
+
       // Persist
       saveGameState();
     } catch (err) {
@@ -513,7 +524,7 @@ export function ZkSeepGame({
     } finally {
       setLoading(false);
     }
-  }, [engine, refreshSnapshot, clearSelection, showStatus, broadcast]);
+  }, [engine, sessionId, refreshSnapshot, clearSelection, showStatus, broadcast, onChainMakeBid]);
 
   /* ---- Execute a specific legal move by index ---- */
   const handleExecuteMove = useCallback((moveIdxOverride?: number) => {
@@ -538,12 +549,29 @@ export function ZkSeepGame({
       // Broadcast the move INDEX to opponent
       broadcast({ type: 'move', moveIdx: idx });
 
+      // Fire-and-forget on-chain move
+      if (sessionId) {
+        const scoreDelta = 0; // Scoring is tracked locally; on-chain gets final result
+        const isSeep = false;
+        onChainMakeMove(
+          sessionId, move.type, move.card.value,
+          zkTargetValue ?? 0, scoreDelta, isSeep
+        ).catch(e => console.warn('[on-chain] move failed (non-blocking):', e));
+      }
+
       // Check if game ended
       const newSnap = getSnapshot(engine);
       if (newSnap.phase === EnginePhase.GameOver) {
         setUiPhase('game_over');
         clearSelection();
         clearSavedGame();
+
+        // Fire-and-forget on-chain end_game
+        if (sessionId) {
+          onChainEndGame(sessionId).catch(e =>
+            console.warn('[on-chain] end_game failed (non-blocking):', e)
+          );
+        }
       } else {
         const zkNote = zkTargetValue !== null ? ` 🔐 ZK proof: value ${zkTargetValue}` : '';
         showStatus(
@@ -558,7 +586,7 @@ export function ZkSeepGame({
     } finally {
       setLoading(false);
     }
-  }, [engine, selectedMoveIdx, refreshSnapshot, clearSelection, showStatus, broadcast, saveGameState, clearSavedGame]);
+  }, [engine, sessionId, selectedMoveIdx, refreshSnapshot, clearSelection, showStatus, broadcast, saveGameState, clearSavedGame, onChainMakeMove, onChainEndGame]);
 
   /* Card selection */
   const handleCardClick = useCallback((card: Card) => {
@@ -631,19 +659,38 @@ export function ZkSeepGame({
             display: 'flex', flexDirection: 'column', gap: '16px',
             maxWidth: '460px', width: '100%',
           }}>
-            {/* Connected wallet info */}
+            {/* Connected wallet info + session wallet */}
             <div style={{
               padding: '12px 16px', background: 'var(--glass)', borderRadius: '8px',
               border: '1px solid var(--glass-border)', textAlign: 'center',
             }}>
-              <span style={{ color: 'var(--accent-teal)', fontSize: '0.75rem' }}>Connected: </span>
+              <span style={{ color: 'var(--accent-teal)', fontSize: '0.75rem' }}>Freighter: </span>
               <span style={{ color: 'var(--text-primary)', fontSize: '0.75rem', fontFamily: 'monospace' }}>
                 {publicKey?.substring(0, 8)}...{publicKey?.substring(publicKey.length - 6)}
               </span>
+              {sessionWalletAddress && (
+                <div style={{ marginTop: '6px' }}>
+                  <span style={{ color: sessionWalletFunded ? 'var(--accent-gold)' : 'var(--text-muted)', fontSize: '0.7rem' }}>
+                    {sessionWalletFunded ? '✅ Game wallet ready' : '⚠️ Game wallet needs funding'}
+                  </span>
+                </div>
+              )}
             </div>
 
+            {/* Fund Session Wallet Button (if not yet funded) */}
+            {!sessionWalletFunded && (
+              <button
+                className="seep-btn seep-btn--gold"
+                onClick={handleFundSessionWallet}
+                disabled={loading}
+                style={{ fontSize: '0.9rem', padding: '14px 32px' }}
+              >
+                {loading ? '⏳ Funding...' : '💰 Fund Game Wallet (10 XLM)'}
+              </button>
+            )}
+
             {/* Create / Join Buttons */}
-            {lobbyMode === 'menu' && (
+            {sessionWalletFunded && lobbyMode === 'menu' && (
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
                 <button
                   className="seep-btn seep-btn--gold"
@@ -664,8 +711,8 @@ export function ZkSeepGame({
               </div>
             )}
 
-            {/* Creating — show session ID */}
-            {lobbyMode === 'creating' && sessionId && (
+            {/* Creating — show room code (PeerJS Peer ID) */}
+            {lobbyMode === 'creating' && peerService.roomCode && (
               <div style={{
                 padding: '20px', background: 'var(--glass)', borderRadius: '12px',
                 border: '1px solid var(--accent-gold)', textAlign: 'center',
@@ -674,10 +721,11 @@ export function ZkSeepGame({
                   Share this code with your opponent:
                 </p>
                 <div style={{
-                  fontSize: '2.4rem', fontWeight: 'bold', fontFamily: 'monospace',
-                  color: 'var(--accent-gold)', letterSpacing: '6px', marginBottom: '16px',
+                  fontSize: '1rem', fontWeight: 'bold', fontFamily: 'monospace',
+                  color: 'var(--accent-gold)', letterSpacing: '2px', marginBottom: '16px',
+                  wordBreak: 'break-all', userSelect: 'all', cursor: 'pointer',
                 }}>
-                  {sessionId}
+                  {peerService.roomCode}
                 </div>
                 <button
                   className="seep-btn seep-btn--gold"
@@ -691,7 +739,7 @@ export function ZkSeepGame({
                   onClick={() => {
                     setLobbyMode('menu');
                     setSessionId(null);
-                    if (channelRef.current) channelRef.current.close();
+                    peerService.cleanup();
                   }}
                   style={{ marginLeft: '12px' }}
                 >
@@ -713,10 +761,9 @@ export function ZkSeepGame({
                   type="text"
                   value={joinCode}
                   onChange={e => setJoinCode(e.target.value)}
-                  placeholder="Enter 6-digit code"
-                  maxLength={6}
+                  placeholder="Enter room code"
                   style={{
-                    width: '200px', textAlign: 'center', fontSize: '1.6rem', fontFamily: 'monospace',
+                    width: '100%', textAlign: 'center', fontSize: '0.9rem', fontFamily: 'monospace',
                     letterSpacing: '4px', padding: '12px',
                     background: 'rgba(0,0,0,0.3)', border: '1px solid var(--glass-border)',
                     borderRadius: '8px', color: 'var(--text-primary)', outline: 'none',
@@ -894,7 +941,7 @@ export function ZkSeepGame({
             setSessionId(null);
             setLobbyMode('menu');
             clearSelection();
-            if (channelRef.current) channelRef.current.close();
+            peerService.cleanup();
             onGameComplete?.();
           }}
         />
