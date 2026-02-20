@@ -102,10 +102,14 @@ export function useWallet() {
       },
 
       signAuthEntry: async (authEntryXdr: string, opts?: any) => {
-        return freighterSignAuthEntry(authEntryXdr, {
+        const result = await freighterSignAuthEntry(authEntryXdr, {
           networkPassphrase: opts?.networkPassphrase || NETWORK_PASSPHRASE,
           address: opts?.address || publicKey,
         });
+        return {
+          ...result,
+          signedAuthEntry: result.signedAuthEntry ?? '',
+        };
       },
     };
   }, [isConnected, publicKey]);

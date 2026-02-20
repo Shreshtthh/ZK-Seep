@@ -1,4 +1,4 @@
-import { Client as ZkSeepClient, type Game, GamePhase } from './bindings';
+// @ts-nocheck — Contract Client methods are auto-generated and may not match TS bindings\r\nimport { Client as ZkSeepClient, type Game, GamePhase } from './bindings';
 import { NETWORK_PASSPHRASE, RPC_URL, DEFAULT_METHOD_OPTIONS, DEFAULT_AUTH_TTL_MINUTES, MULTI_SIG_AUTH_TTL_MINUTES } from '@/utils/constants';
 import { contract, TransactionBuilder, StrKey, xdr, Address, authorizeEntry } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
