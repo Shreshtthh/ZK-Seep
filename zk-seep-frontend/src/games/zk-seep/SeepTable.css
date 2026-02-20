@@ -1,0 +1,725 @@
+/* ============================================================================
+   ZK SEEP — Dark Card Table Theme
+   ============================================================================ */
+
+/* ---------- Design Tokens ---------- */
+:root {
+  --felt-dark: #0a1a12;
+  --felt: #0f2a1a;
+  --felt-light: #163824;
+  --felt-glow: rgba(16, 185, 129, 0.08);
+  --gold: #f5c842;
+  --gold-dim: #a68a2a;
+  --gold-glow: rgba(245, 200, 66, 0.15);
+  --card-white: #f8f6f0;
+  --card-shadow: rgba(0, 0, 0, 0.35);
+  --red-suit: #dc2626;
+  --black-suit: #1a1a2e;
+  --panel-bg: rgba(10, 26, 18, 0.85);
+  --panel-border: rgba(245, 200, 66, 0.15);
+  --glass: rgba(255, 255, 255, 0.04);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --text-primary: #e8e4dc;
+  --text-muted: #8a9a8e;
+  --text-bright: #ffffff;
+  --accent-teal: #10b981;
+  --accent-purple: #a78bfa;
+  --danger: #ef4444;
+  --card-width: 72px;
+  --card-height: 100px;
+  --card-radius: 8px;
+  --transition-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ---------- Game Table ---------- */
+.seep-table {
+  position: relative;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  min-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 55%, var(--felt-light), transparent),
+    radial-gradient(ellipse 120% 100% at 50% 50%, var(--felt), var(--felt-dark));
+  border-radius: 24px;
+  border: 1px solid var(--panel-border);
+  box-shadow:
+    0 0 80px rgba(16, 185, 129, 0.06),
+    inset 0 0 120px rgba(0, 0, 0, 0.3);
+  padding: 20px;
+  overflow: hidden;
+  font-family: 'Inter', sans-serif;
+  color: var(--text-primary);
+}
+
+/* ---------- Header ---------- */
+.seep-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  backdrop-filter: blur(12px);
+  margin-bottom: 16px;
+}
+
+.seep-header__title {
+  font-family: 'Lora', serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--gold), var(--accent-teal));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.seep-header__title .lock-icon {
+  width: 18px;
+  height: 18px;
+  opacity: 0.7;
+}
+
+.seep-header__phase {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent-teal);
+  background: rgba(16, 185, 129, 0.1);
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+/* ---------- Scoreboard ---------- */
+.seep-scores {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.seep-score-card {
+  flex: 1;
+  padding: 12px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+  text-align: center;
+  transition: border-color 0.3s var(--transition-smooth);
+}
+
+.seep-score-card--active {
+  border-color: var(--gold);
+  box-shadow: 0 0 20px var(--gold-glow);
+}
+
+.seep-score-card__label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.seep-score-card__value {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+
+.seep-score-card__sub {
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ---------- Opponent Hand ---------- */
+.seep-opponent-hand {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 0;
+  min-height: 80px;
+}
+
+/* ---------- Playing Card ---------- */
+.playing-card {
+  width: var(--card-width);
+  height: var(--card-height);
+  border-radius: var(--card-radius);
+  position: relative;
+  cursor: default;
+  transition: transform 0.25s var(--transition-smooth),
+    box-shadow 0.25s var(--transition-smooth);
+  flex-shrink: 0;
+}
+
+.playing-card--face-up {
+  background: var(--card-white);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 12px var(--card-shadow);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+}
+
+.playing-card--face-down {
+  background: linear-gradient(135deg, #1a365d, #2d3748, #1a365d);
+  border: 2px solid var(--gold-dim);
+  box-shadow: 0 4px 12px var(--card-shadow);
+}
+
+.playing-card--face-down::after {
+  content: '✦';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gold-dim);
+  font-size: 1.2rem;
+  opacity: 0.4;
+}
+
+.playing-card--selectable {
+  cursor: pointer;
+}
+
+.playing-card--selectable:hover {
+  transform: translateY(-12px) scale(1.05);
+  box-shadow: 0 12px 28px var(--card-shadow),
+    0 0 20px var(--gold-glow);
+  z-index: 10;
+}
+
+.playing-card--selected {
+  transform: translateY(-16px) scale(1.08);
+  box-shadow: 0 12px 28px var(--card-shadow),
+    0 0 24px var(--gold-glow);
+  border-color: var(--gold) !important;
+  z-index: 11;
+}
+
+.playing-card--small {
+  width: 52px;
+  height: 72px;
+  font-size: 0.75rem;
+}
+
+.playing-card__value {
+  font-size: 1.1rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.playing-card__suit {
+  font-size: 1.4rem;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.playing-card--red .playing-card__value,
+.playing-card--red .playing-card__suit {
+  color: var(--red-suit);
+}
+
+.playing-card--black .playing-card__value,
+.playing-card--black .playing-card__suit {
+  color: var(--black-suit);
+}
+
+.playing-card__corner {
+  position: absolute;
+  top: 3px;
+  left: 4px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.playing-card__corner--bottom {
+  top: auto;
+  left: auto;
+  bottom: 3px;
+  right: 4px;
+  transform: rotate(180deg);
+}
+
+/* ---------- Floor / Center ---------- */
+.seep-floor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  padding: 16px;
+  position: relative;
+}
+
+.seep-floor__label {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  opacity: 0.6;
+}
+
+.seep-floor__piles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+  align-items: center;
+}
+
+.seep-floor__empty {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+  opacity: 0.5;
+}
+
+/* ---------- Pile ---------- */
+.seep-pile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  transition: all 0.2s var(--transition-smooth);
+  cursor: default;
+}
+
+.seep-pile--selectable {
+  cursor: pointer;
+}
+
+.seep-pile--selectable:hover {
+  border-color: rgba(245, 200, 66, 0.3);
+  background: rgba(245, 200, 66, 0.05);
+}
+
+.seep-pile--selected {
+  border-color: var(--gold);
+  background: rgba(245, 200, 66, 0.08);
+  box-shadow: 0 0 16px var(--gold-glow);
+}
+
+.seep-pile--fixed {
+  border-color: rgba(167, 139, 250, 0.3);
+}
+
+.seep-pile__badge {
+  font-size: 0.55rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  background: var(--glass);
+  padding: 2px 8px;
+  border-radius: 8px;
+}
+
+.seep-pile__badge--fixed {
+  color: var(--accent-purple);
+  background: rgba(167, 139, 250, 0.12);
+}
+
+.seep-pile__cards {
+  display: flex;
+  gap: -6px;
+}
+
+.seep-pile__cards .playing-card {
+  margin-left: -16px;
+}
+
+.seep-pile__cards .playing-card:first-child {
+  margin-left: 0;
+}
+
+/* ---------- Player Hand ---------- */
+.seep-hand {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 0 8px;
+  min-height: 120px;
+  flex-wrap: wrap;
+}
+
+.seep-hand__label {
+  width: 100%;
+  text-align: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+/* ---------- Action Bar ---------- */
+.seep-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  backdrop-filter: blur(12px);
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.seep-btn {
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 0.8rem;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s var(--transition-smooth);
+  border: 1px solid var(--panel-border);
+  background: var(--glass);
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.seep-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.seep-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.seep-btn--primary {
+  background: linear-gradient(135deg, var(--accent-teal), #059669);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: white;
+}
+
+.seep-btn--primary:hover:not(:disabled) {
+  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.25);
+}
+
+.seep-btn--gold {
+  background: linear-gradient(135deg, var(--gold), #d4a017);
+  border-color: rgba(245, 200, 66, 0.4);
+  color: var(--felt-dark);
+}
+
+.seep-btn--gold:hover:not(:disabled) {
+  box-shadow: 0 8px 24px var(--gold-glow);
+}
+
+.seep-btn--danger {
+  background: linear-gradient(135deg, var(--danger), #b91c1c);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: white;
+}
+
+.seep-btn--small {
+  padding: 6px 14px;
+  font-size: 0.7rem;
+}
+
+/* ---------- Bidding Panel ---------- */
+.seep-bid-panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 24px;
+  backdrop-filter: blur(12px);
+  text-align: center;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.seep-bid-panel__title {
+  font-family: 'Lora', serif;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--gold);
+  margin-bottom: 16px;
+}
+
+.seep-bid-values {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.seep-bid-chip {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 1rem;
+  cursor: pointer;
+  border: 2px solid var(--glass-border);
+  background: var(--glass);
+  color: var(--text-primary);
+  transition: all 0.2s var(--transition-smooth);
+}
+
+.seep-bid-chip:hover {
+  border-color: var(--gold);
+  transform: scale(1.1);
+  box-shadow: 0 0 16px var(--gold-glow);
+}
+
+.seep-bid-chip--selected {
+  border-color: var(--gold);
+  background: linear-gradient(135deg, var(--gold), #d4a017);
+  color: var(--felt-dark);
+  transform: scale(1.15);
+  box-shadow: 0 0 20px var(--gold-glow);
+}
+
+.seep-bid-chip--disabled,
+.seep-bid-chip:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+  transform: none;
+  text-decoration: line-through;
+}
+
+.seep-bid-chip--disabled:hover,
+.seep-bid-chip:disabled:hover {
+  border-color: var(--glass-border);
+  transform: none;
+  box-shadow: none;
+}
+
+/* ---------- Status Banner ---------- */
+.seep-status {
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.seep-status--info {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  color: var(--accent-teal);
+}
+
+.seep-status--warning {
+  background: rgba(245, 200, 66, 0.1);
+  border: 1px solid rgba(245, 200, 66, 0.2);
+  color: var(--gold);
+}
+
+.seep-status--error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: var(--danger);
+}
+
+.seep-status--success {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #34d399;
+}
+
+/* ---------- Game Over Panel ---------- */
+.seep-gameover {
+  text-align: center;
+  padding: 32px 24px;
+  background: var(--panel-bg);
+  border: 1px solid var(--gold);
+  border-radius: 20px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 0 40px var(--gold-glow);
+  margin: 24px auto;
+  max-width: 460px;
+}
+
+.seep-gameover__trophy {
+  font-size: 4rem;
+  line-height: 1;
+  margin-bottom: 12px;
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.seep-gameover__title {
+  font-family: 'Lora', serif;
+  font-size: 1.6rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--gold), var(--accent-teal));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-bottom: 8px;
+}
+
+.seep-gameover__subtitle {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-bottom: 20px;
+}
+
+.seep-gameover__scores {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+
+/* ---------- Turn Indicator ---------- */
+.seep-turn-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.seep-turn-indicator--your-turn {
+  background: rgba(245, 200, 66, 0.15);
+  border: 1px solid rgba(245, 200, 66, 0.3);
+  color: var(--gold);
+}
+
+.seep-turn-indicator--waiting {
+  background: rgba(138, 154, 142, 0.1);
+  border: 1px solid rgba(138, 154, 142, 0.2);
+  color: var(--text-muted);
+  animation: none;
+}
+
+@keyframes pulse-glow {
+
+  0%,
+  100% {
+    box-shadow: 0 0 8px var(--gold-glow);
+  }
+
+  50% {
+    box-shadow: 0 0 20px var(--gold-glow);
+  }
+}
+
+/* ---------- Move Type Selector ---------- */
+.seep-move-types {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.seep-move-chip {
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  color: var(--text-muted);
+  transition: all 0.2s var(--transition-smooth);
+}
+
+.seep-move-chip:hover {
+  border-color: var(--accent-teal);
+  color: var(--accent-teal);
+}
+
+.seep-move-chip--active {
+  border-color: var(--accent-teal);
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--accent-teal);
+}
+
+.seep-move-chip--zk {
+  position: relative;
+}
+
+.seep-move-chip--zk::after {
+  content: '🔒';
+  font-size: 0.5rem;
+  margin-left: 3px;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 640px) {
+  .seep-table {
+    border-radius: 16px;
+    padding: 12px;
+    min-height: 95vh;
+  }
+
+  :root {
+    --card-width: 56px;
+    --card-height: 78px;
+  }
+
+  .seep-hand {
+    gap: 4px;
+  }
+
+  .seep-actions {
+    gap: 4px;
+    padding: 8px;
+  }
+
+  .seep-btn {
+    padding: 8px 12px;
+    font-size: 0.7rem;
+  }
+
+  .seep-scores {
+    flex-direction: column;
+    gap: 6px;
+  }
+}
