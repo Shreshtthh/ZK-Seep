@@ -106,6 +106,23 @@ pub trait GameHub {
 }
 ```
 
+## ZK Seep — On-Chain Flow
+
+ZK Seep uses a **hybrid off-chain/on-chain** architecture. Most gameplay runs in-browser; the contract acts as an arbiter and ZK verifier.
+
+| Step | Transaction? | Details |
+|------|-------------|---------|
+| Create game | ✅ `start_game()` | Both players sign, registers in GameHub |
+| Commit hands | ✅ `commit_hand()` ×2 | Each player commits hash of initial 4 cards |
+| Bid | ✅ `make_bid()` | Bidder submits value + ZK proof of holding that card |
+| Bid move (house) | ✅ `make_move()` | ZK proof required for house-building moves (types 2–6) |
+| Bid move (throw/pickup) | ❌ | No proof needed, synced locally |
+| Deal more cards | ✅ `update_hand()` | New hand hash committed after each deal |
+| Regular play | **Only house moves** | Types 2–6 need ZK proof → transaction. Throws/pickups are free |
+| Game over | ✅ `end_game()` | Reports winner to GameHub for points |
+
+**~4–6 guaranteed transactions per game** (start, 2× commit, bid, end, deal updates), plus additional transactions only for house-building/cementing moves.
+
 ## Studio Reference
 
 Run the studio frontend locally (from `sgs_frontend/`):

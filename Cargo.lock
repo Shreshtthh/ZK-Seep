@@ -1836,3 +1836,10 @@ dependencies = [
  "quote",
  "syn 2.0.111",
 ]
+
+[[package]]
+name = "zk-seep"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
