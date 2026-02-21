@@ -1,0 +1,8 @@
+# Test vector matching test_valid_hand in main.nr
+# Hand: 4 cards [1, 5, 9, 3] + 8 empty slots
+hand = ["1", "5", "9", "3", "0", "0", "0", "0", "0", "0", "0", "0"]
+salt = "42"
+
+# Poseidon2 hash of [1, 5, 9, 3, 0, 0, 0, 0, 0, 0, 0, 0, 42]
+hand_hash = "0x095340c8549c3f7f685dc4a421a1c40534fd8f9481a39ff76cd49e077fcee35b"
+target_value = "9"

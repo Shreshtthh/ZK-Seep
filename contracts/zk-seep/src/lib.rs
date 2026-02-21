@@ -35,11 +35,11 @@ pub trait GameHub {
     fn end_game(env: Env, session_id: u32, player1_won: bool);
 }
 
-/// Ultrahonk ZK verifier contract interface
-/// Verifies Noir-generated proofs on-chain
+/// Ultrahonk ZK verifier contract interface (indextree/ultrahonk_soroban_contract)
+/// VK is baked into the verifier at deploy time; we only send proof + public inputs.
 #[contractclient(name = "VerifierClient")]
 pub trait ZkVerifier {
-    fn verify(env: Env, proof: Bytes, public_inputs: Vec<Bytes>) -> bool;
+    fn verify_proof(env: Env, public_inputs: Bytes, proof_bytes: Bytes) -> bool;
 }
 
 // ============================================================================
@@ -309,6 +309,9 @@ impl ZkSeepContract {
         }
 
         env.storage().temporary().set(&key, &game);
+        env.storage()
+            .temporary()
+            .extend_ttl(&key, GAME_TTL_LEDGERS, GAME_TTL_LEDGERS);
         Ok(())
     }
 
@@ -362,6 +365,9 @@ impl ZkSeepContract {
         game.current_turn = game.bidder;
 
         env.storage().temporary().set(&key, &game);
+        env.storage()
+            .temporary()
+            .extend_ttl(&key, GAME_TTL_LEDGERS, GAME_TTL_LEDGERS);
         Ok(())
     }
 
@@ -489,6 +495,9 @@ impl ZkSeepContract {
         }
 
         env.storage().temporary().set(&key, &game);
+        env.storage()
+            .temporary()
+            .extend_ttl(&key, GAME_TTL_LEDGERS, GAME_TTL_LEDGERS);
         Ok(())
     }
 
@@ -521,6 +530,9 @@ impl ZkSeepContract {
         }
 
         env.storage().temporary().set(&key, &game);
+        env.storage()
+            .temporary()
+            .extend_ttl(&key, GAME_TTL_LEDGERS, GAME_TTL_LEDGERS);
         Ok(())
     }
 
@@ -556,6 +568,9 @@ impl ZkSeepContract {
 
         game.winner = Some(winner.clone());
         env.storage().temporary().set(&key, &game);
+        env.storage()
+            .temporary()
+            .extend_ttl(&key, GAME_TTL_LEDGERS, GAME_TTL_LEDGERS);
 
         // Notify GameHub
         let game_hub_addr: Address = env
@@ -583,7 +598,8 @@ impl ZkSeepContract {
     // ========================================================================
 
     /// Verify a hand_contains ZK proof.
-    /// Calls the external Ultrahonk verifier contract.
+    /// Calls the external indextree/ultrahonk_soroban_contract verifier.
+    /// Public inputs are concatenated into a single Bytes blob (32 bytes per field).
     fn verify_hand_contains_proof(
         env: &Env,
         proof: &Bytes,
@@ -598,17 +614,17 @@ impl ZkSeepContract {
 
         let verifier = VerifierClient::new(env, &verifier_addr);
 
-        // Public inputs for the circuit:
-        // 1. hand_hash (Field)
-        // 2. target_value (Field)
-        let mut public_inputs: Vec<Bytes> = Vec::new(env);
-        public_inputs.push_back(Bytes::from_slice(env, hand_hash.to_array().as_slice()));
+        // Public inputs for the circuit (concatenated, 32 bytes each, big-endian):
+        // 1. hand_hash (Field)  — 32 bytes
+        // 2. target_value (Field) — 32 bytes (u32 right-padded in big-endian)
+        let mut public_inputs = Bytes::new(env);
+        public_inputs.extend_from_slice(hand_hash.to_array().as_slice());
 
         let mut target_bytes = [0u8; 32];
         target_bytes[28..32].copy_from_slice(&target_value.to_be_bytes());
-        public_inputs.push_back(Bytes::from_slice(env, &target_bytes));
+        public_inputs.extend_from_slice(&target_bytes);
 
-        let valid = verifier.verify(proof, &public_inputs);
+        let valid = verifier.verify_proof(&public_inputs, proof);
         if !valid {
             return Err(Error::ProofVerificationFailed);
         }

@@ -58,6 +58,9 @@ fn test_valid_hand() {
     preimage[12] = salt;
     let hand_hash = Poseidon2::hash(preimage, 13);
 
+    // Print the hash so we can use it in Prover.toml
+    println(hand_hash);
+
     // This should pass
     main(hand, salt, hand_hash, 9);
 }
