@@ -329,7 +329,7 @@ export class ZkSeepService {
     // Update the sequence number to Player 2's account
     const server = new rpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith('http://') });
     const player2Account = await server.getAccount(player2Address);
-    const newSeqNum = xdr.Int64.fromString(player2Account.sequenceNumber());
+    const newSeqNum = xdr.Int64.fromString((BigInt(player2Account.sequenceNumber()) + 1n).toString());
     txBody.seqNum(newSeqNum);
 
     // Rebuild the transaction object from the modified envelope XDR
