@@ -120,7 +120,7 @@ graph TB
     subgraph Browser["Browser - React + TypeScript"]
         UI["Game UI<br/>ZkSeepGame.tsx"]
         Engine["Local Game Engine<br/>SeepGame.ts"]
-        Peer["PeerJS Service<br/>WebRTC P2P"]
+        Sync["Sync Service<br/>BroadcastChannel / PeerJS"]
         Session["Session Wallet<br/>Keypair in sessionStorage"]
         ZkProof["ZK Proof Generator<br/>Noir / Barretenberg"]
         OnChain["On-Chain Hook<br/>useOnChain.ts"]
@@ -138,7 +138,7 @@ graph TB
     end
 
     UI --> Engine
-    UI --> Peer
+    UI --> Sync
     UI --> OnChain
     OnChain --> Session
     OnChain --> ZkSeep
@@ -148,7 +148,7 @@ graph TB
     ZkProof --> HC
     OnChain --> ZkProof
 
-    Peer <-->|"WebRTC<br/>seed, bids, moves"| Peer
+    Sync <-->|"BroadcastChannel (local)<br/>or WebRTC (cross-device)<br/>seed, bids, moves"| Sync
 
     style Browser fill:#0d1117,color:#c9d1d9,stroke:#30363d
     style Stellar fill:#1a1a2e,color:#eee,stroke:#533483
@@ -166,8 +166,8 @@ graph TB
 | **Game Hub** | Points tracking and leaderboard across all games in the Stellar Game Studio |
 | **Noir Circuit** (`circuits/hand_contains`) | Poseidon2 hash commitment + card membership proof |
 | **Game Engine** (`src/game/`) | Full Seep rule engine in TypeScript - move generation, validation, scoring |
-| **PeerJS Service** | WebRTC peer-to-peer for real cross-device multiplayer |
-| **Session Wallet** | Ephemeral Stellar keypair - signs game transactions silently without wallet popups |
+| **Sync Service** | Dual-mode: BroadcastChannel (localhost) or PeerJS WebRTC (deployed/cross-device) |
+| **Session Wallet** | Ephemeral Stellar keypair per tab - signs game transactions silently without wallet popups |
 | **On-Chain Hook** | Fires `start_game`, `make_bid`, `make_move`, `end_game` to the contract during gameplay |
 
 ---
@@ -271,14 +271,23 @@ This gives a **Web2-like gameplay experience** with full on-chain verifiability.
 
 ## Cross-Device Multiplayer
 
-ZK Seep uses **PeerJS** (WebRTC) for peer-to-peer multiplayer:
+ZK Seep uses a **dual-mode networking layer** that auto-selects the best transport:
 
-- Player 1 creates a room → gets a room code
-- Player 2 enters the room code on their device
-- Game seed, bids, and moves are exchanged directly between browsers
-- No central server required - fully decentralized
+| Mode | Transport | When |
+|---|---|---|
+| **Local** | `BroadcastChannel` | `localhost` — instant, zero network deps |
+| **Deployed** | PeerJS (WebRTC) | Vercel / any non-localhost origin |
+
+**How it works:**
+
+1. Player 1 creates a room → gets a room code
+2. Player 2 enters the room code
+3. Game seed, bids, and moves are exchanged directly between browsers
+4. No central server required — fully decentralized
 
 Both players run the same deterministic game engine with the same seed. Move indices are exchanged, so both engines stay perfectly synchronized.
+
+> **Local testing:** Open two normal browser tabs (not InPrivate/Incognito — `BroadcastChannel` doesn't bridge across browser contexts). Each tab automatically gets its own session wallet via `sessionStorage`.
 
 ---
 
@@ -314,7 +323,7 @@ Both players run the same deterministic game engine with the same seed. Move ind
 | Proof System | UltraHonk (bb 0.87.0) |
 | Frontend | React 19 + TypeScript + Vite |
 | Styling | TailwindCSS 4 |
-| Multiplayer | PeerJS (WebRTC) |
+| Multiplayer | BroadcastChannel (local) + PeerJS WebRTC (cross-device) |
 | Wallet | Freighter (connect) + Session Keypair (gameplay) |
 | Deployment | Vercel (frontend) + Stellar Testnet (contracts) |
 
@@ -324,9 +333,9 @@ Both players run the same deterministic game engine with the same seed. Move ind
 
 | Contract | Address |
 |---|---|
-| ZK Seep | `CBMD4JH436B663IZAQLX5RHNYICU4COZQIXOOLWQU6HVM2W555CGNCDM` |
-| Mock Game Hub | `CDFKCMD4MCDXZHJBHDE5RRZLDCPNXGEKUKZ6ADGOHE4XMVEIRZP746P2` |
-| Mock Verifier | `CACRB7CXQ6QWPV7V556XVD4657HO32ORXJBYYKHRSUND6PNO5FBGPE32` |
+| ZK Seep | `CCMG3EP4S6UDNNYWWV5F7SE7A7DY53OZV3BRWTELSFOB2L2JGKQSBKWB` |
+| Mock Game Hub(used for localnet) | `CBWEN5RR2EWKGCWKH3QBA3LGNTQUZ6RXVRKY2FGBHPKELK4MJNFEAKHA` |
+| Mock Verifier | `CCYDEFG4NEJJPA6ABIGS2UGCEBD7U36ZFVYOY3DUMMKKJ6RV67IA644C` |
 
 ---
 
@@ -360,15 +369,28 @@ bun run dev
 
 ### Running with Real ZK Verification (Localnet)
 
+The real UltraHonk ZK verifier requires ~367M CPU instructions — beyond the testnet 400M cap. Use localnet with unlimited limits:
+
 ```bash
-# Start local Stellar node with unlimited CPU
-docker run -p 8000:8000 stellar/quickstart --standalone --limits unlimited
+# 1. Start local Stellar node
+docker run --rm -it -p 8000:8000 --name stellar \
+  stellar/quickstart:soroban-dev --local --limits unlimited
 
-# Deploy contracts to localnet
-bun run scripts/deploy.ts --network local
+# 2. Fund deployer
+stellar network add localnet \
+  --rpc-url "http://localhost:8000/soroban/rpc" \
+  --network-passphrase "Standalone Network ; February 2017"
+stellar keys generate alice --network localnet --fund
 
-# The real UltraHonk verifier will work within unlimited CPU limits
+# 3. Deploy all contracts (builds, deploys, and wires up cross-contract IDs)
+chmod +x scripts/deploy-localnet.sh
+./scripts/deploy-localnet.sh
+
+# 4. Start frontend
+cd zk-seep-frontend && bun run dev
 ```
+
+Open two browser tabs at `localhost:5173`. Create & fund a game wallet in each, then create and join a game.
 
 ---
 
@@ -400,7 +422,7 @@ Stellar-Game-Studio/
 │   │   │   ├── useWallet.ts   # Freighter + session wallet
 │   │   │   └── useOnChain.ts  # Contract call hook
 │   │   └── services/
-│   │       └── peerService.ts # PeerJS multiplayer
+│   │       └── peerService.ts # Dual-mode: BroadcastChannel / PeerJS
 │   └── package.json
 └── scripts/                   # Build, deploy, setup scripts
 ```
@@ -411,15 +433,38 @@ Stellar-Game-Studio/
 
 This is not a weekend hackathon project. ZK Seep includes:
 
-- ✅ **Complete Seep game engine** - all 7 move types, house limits, seep bonuses, multi-round dealing
-- ✅ **ZK circuit** - Noir circuit with Poseidon2 hash commitment + card membership proof
-- ✅ **On-chain game contract** - 689 lines of Rust, full game lifecycle with ZK proof enforcement
-- ✅ **Cross-device multiplayer** - PeerJS WebRTC, no central server
-- ✅ **Embedded session wallet** - zero popup fatigue, Web2-like UX
-- ✅ **Mock verifier** - enables full testnet demo within CPU limits
-- ✅ **Game Hub integration** - start_game / end_game for points and leaderboard
-- ✅ **Beautiful UI** - dark theme, card animations, responsive design
-- ✅ **Live deployment** - playable at [zk-seep.vercel.app](https://zk-seep.vercel.app)
+- ✅ **Complete Seep game engine** — all 7 move types, house limits, seep bonuses, multi-round dealing
+- ✅ **ZK circuit** — Noir circuit with Poseidon2 hash commitment + card membership proof
+- ✅ **On-chain game contract** — 689 lines of Rust, full game lifecycle with ZK proof enforcement
+- ✅ **Cross-device multiplayer** — dual BroadcastChannel / PeerJS WebRTC, no central server
+- ✅ **Embedded session wallet** — zero popup fatigue, Web2-like UX
+- ✅ **Async multi-sig handshake** — two session wallets authorize `start_game` across devices via XDR reconstruction
+- ✅ **Mock verifier** — enables full testnet demo within CPU limits
+- ✅ **Game Hub integration** — start_game / end_game for points and leaderboard
+- ✅ **Beautiful UI** — dark theme, card animations, responsive design
+- ✅ **Live deployment** — playable at [zk-seep.vercel.app](https://zk-seep.vercel.app)
+
+---
+
+## Technical Deep Dive
+
+### Async Multi-Signature Handshake
+
+The `start_game` contract requires **both** players to `require_auth`, but they're on separate devices. Solving this required fixing two critical Stellar SDK bugs:
+
+1. **Double-Simulation Footprint Drop** — Player 2 re-simulated the transaction locally, which dropped Player 1's nonce from the footprint. Fix: bypass standard submission and send the exact XDR footprint that Player 1 simulated.
+2. **`toEnvelope()` Immutability Trap** — `tx.toEnvelope()` returns a *disconnected copy*. Injecting Player 1's signature into the envelope didn't propagate to the submitted transaction. Fix: export the modified envelope to Base64, then reconstruct via `TransactionBuilder.fromXDR()`.
+
+### Off-Chain Turn Enforcement
+
+The on-chain contract does **not** enforce turn order — PeerJS delivers moves in ~50ms, but on-chain confirmations take ~5 seconds. Strict alternation would cause `NotYourTurn` race conditions.
+
+**What the contract enforces:** player identity, ZK proof validation, game phase validity, score tracking.
+**What the frontend enforces:** turn order, move legality, house rules.
+
+### Session Wallet Identity (Localnet)
+
+On localnet, the same Freighter wallet can be used for both players. Each browser tab generates its own **ephemeral session wallet** (`sessionStorage` is per-tab), so the contract sees two distinct players even when the same Freighter is connected.
 
 ---
 
