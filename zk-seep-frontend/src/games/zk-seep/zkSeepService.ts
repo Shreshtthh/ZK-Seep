@@ -138,7 +138,7 @@ export class ZkSeepService {
     player2Points: bigint,
     player1Signer: Pick<contract.ClientOptions, 'signTransaction' | 'signAuthEntry'>,
     authTtlMinutes?: number
-  ): Promise<string> {
+  ): Promise<{ authXdr: string; txXdr: string }> {
     const buildClient = new ZkSeepClient({
       contractId: this.contractId,
       networkPassphrase: NETWORK_PASSPHRASE,
