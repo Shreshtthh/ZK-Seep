@@ -89,7 +89,7 @@ flowchart TD
 
     G{"Hand empty?"}
     G -->|"Yes"| R{"Cards left<br/>in deck?"}
-    R -->|"Yes"| RE["Deal 4 more cards each"]
+    R -->|"Yes"| RE["Deal 12 more cards each"]
     RE --> E
     R -->|"No"| S["🏆 Count captured cards<br/>Determine winner"]
 
@@ -393,8 +393,8 @@ Both players run the same deterministic game engine with the same seed. Move ind
 
 ```bash
 # Clone and install
-git clone https://github.com/user/Stellar-Game-Studio.git
-cd Stellar-Game-Studio
+git clone https://github.com/user/ZK-Seep.git
+cd ZK-Seep
 
 # Build contracts
 stellar contract build
@@ -481,7 +481,7 @@ bun run dev
 ## Project Structure
 
 ```
-Stellar-Game-Studio/
+ZK-Seep/
 ├── contracts/
 │   ├── zk-seep/              # Main game contract (Rust/Soroban)
 │   │   └── src/lib.rs         # 689 lines - game state, turns, ZK verification
