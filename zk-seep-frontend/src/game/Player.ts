@@ -91,20 +91,19 @@ export class Player {
             }
 
             // ───── Type 2: Build unfixed house ─────
-            // Blocked if 2 houses already exist on the floor
-            if (houseCount < 2) {
-                for (let points = Math.max(9 - card.value, 0); points < Math.max(14 - card.value, 0); points++) {
-                    if (points > 0 && this.countValue(card.value + points) >= 1) {
-                        const waysToMake = center.getMoves(points, false);
-                        const totalValue = card.value + points;
-                        if (waysToMake.length > 0 && !currentPileValues.includes(totalValue) &&
-                            (!bidMove || totalValue === bid)) {
-                            for (const way of waysToMake) {
-                                // Net change: +1 new house - houses consumed by way piles
-                                const housesConsumed = way.filter(isHouse).length;
-                                if (houseCount + 1 - housesConsumed <= 2) {
-                                    moves.push({ type: MoveType.Build, card, piles: way });
-                                }
+            // Net-change rule: after the build, total houses on floor must be ≤ 2.
+            // Building consumes the "way" piles and creates 1 new house.
+            for (let points = Math.max(9 - card.value, 0); points < Math.max(14 - card.value, 0); points++) {
+                if (points > 0 && this.countValue(card.value + points) >= 1) {
+                    const waysToMake = center.getMoves(points, false);
+                    const totalValue = card.value + points;
+                    if (waysToMake.length > 0 && !currentPileValues.includes(totalValue) &&
+                        (!bidMove || totalValue === bid)) {
+                        for (const way of waysToMake) {
+                            // Net change: +1 new house - houses consumed by way piles
+                            const housesConsumed = way.filter(isHouse).length;
+                            if (houseCount + 1 - housesConsumed <= 2) {
+                                moves.push({ type: MoveType.Build, card, piles: way });
                             }
                         }
                     }

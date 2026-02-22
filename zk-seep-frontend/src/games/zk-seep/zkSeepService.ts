@@ -1,6 +1,7 @@
-// @ts-nocheck — Contract Client methods are auto-generated and may not match TS bindings\r\nimport { Client as ZkSeepClient, type Game, GamePhase } from './bindings';
+// @ts-nocheck — Contract Client methods are auto-generated and may not match TS bindings
+import { Client as ZkSeepClient, type Game, GamePhase } from './bindings';
 import { NETWORK_PASSPHRASE, RPC_URL, DEFAULT_METHOD_OPTIONS, DEFAULT_AUTH_TTL_MINUTES, MULTI_SIG_AUTH_TTL_MINUTES } from '@/utils/constants';
-import { contract, TransactionBuilder, StrKey, xdr, Address, authorizeEntry } from '@stellar/stellar-sdk';
+import { contract, TransactionBuilder, StrKey, xdr, Address, authorizeEntry, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 import { signAndSendViaLaunchtube } from '@/utils/transactionHelper';
 import { calculateValidUntilLedger } from '@/utils/ledgerUtils';
@@ -24,6 +25,7 @@ export class ZkSeepService {
       contractId: this.contractId,
       networkPassphrase: NETWORK_PASSPHRASE,
       rpcUrl: RPC_URL,
+      allowHttp: RPC_URL.startsWith('http://'),
     });
   }
 
@@ -39,6 +41,7 @@ export class ZkSeepService {
       contractId: this.contractId,
       networkPassphrase: NETWORK_PASSPHRASE,
       rpcUrl: RPC_URL,
+      allowHttp: RPC_URL.startsWith('http://'),
       publicKey,
       ...signer,
     });
@@ -92,6 +95,34 @@ export class ZkSeepService {
   }
 
   /* ================================================================
+   * start_game — simple single-signer flow (localnet)
+   * ================================================================ */
+
+  /**
+   * Start a game with a single signer (for localnet demo).
+   * Both players can be the same address.
+   */
+  async startGameSimple(
+    sessionId: number,
+    player1: string,
+    player2: string,
+    player1Points: bigint,
+    player2Points: bigint,
+    signer: Pick<contract.ClientOptions, 'signTransaction' | 'signAuthEntry'>
+  ) {
+    const client = this.createSigningClient(player1, signer);
+    const tx = await client.start_game({
+      session_id: sessionId,
+      player1,
+      player2,
+      player1_points: player1Points,
+      player2_points: player2Points,
+    }, DEFAULT_METHOD_OPTIONS);
+
+    return this.submitTx(tx, DEFAULT_METHOD_OPTIONS.timeoutInSeconds);
+  }
+
+  /* ================================================================
    * start_game — multi-sig flow (3 steps)
    * ================================================================ */
 
@@ -112,6 +143,7 @@ export class ZkSeepService {
       contractId: this.contractId,
       networkPassphrase: NETWORK_PASSPHRASE,
       rpcUrl: RPC_URL,
+      allowHttp: RPC_URL.startsWith('http://'),
       publicKey: player2,
     });
 
@@ -156,26 +188,29 @@ export class ZkSeepService {
       throw new Error('signAuthEntry function not available');
     }
 
+    // For session wallets, use the raw Keypair directly with authorizeEntry
+    // This avoids signature format issues with the signAuthEntry callback
+    const sessionSecret = globalThis.sessionStorage?.getItem('zk-seep-session-wallet');
+    if (!sessionSecret) {
+      throw new Error('Session wallet not found — cannot sign auth entry');
+    }
+    const signingKeypair = Keypair.fromSecret(sessionSecret);
+
     const signedAuthEntry = await authorizeEntry(
       player1AuthEntry,
-      async (preimage) => {
-        if (!player1Signer.signAuthEntry) {
-          throw new Error('Wallet does not support auth entry signing');
-        }
-        const signResult = await player1Signer.signAuthEntry(
-          preimage.toXDR('base64'),
-          { networkPassphrase: NETWORK_PASSPHRASE, address: player1 }
-        );
-        if (signResult.error) {
-          throw new Error(`Failed to sign auth entry: ${signResult.error.message}`);
-        }
-        return Buffer.from(signResult.signedAuthEntry, 'base64');
-      },
+      signingKeypair,
       validUntilLedgerSeq,
       NETWORK_PASSPHRASE,
     );
 
-    return signedAuthEntry.toXDR('base64');
+    const signedAuthEntryXdr = signedAuthEntry.toXDR('base64');
+
+    // Also return the full transaction XDR — it has the correct footprint
+    // (including Player 1's nonce). The Joiner MUST NOT re-simulate because
+    // re-simulation with populated auth strips the nonce from the footprint.
+    const fullTxXdr = tx.toXDR();
+
+    return { authXdr: signedAuthEntryXdr, txXdr: fullTxXdr };
   }
 
   /**
@@ -214,82 +249,155 @@ export class ZkSeepService {
   }
 
   /**
-   * STEP 2 (Player 2): Import Player 1's signed auth entry and rebuild transaction.
+   * STEP 2 (Player 2): Use the HOST's pre-simulated transaction, inject Player 1's
+   * signed auth entry, sign the envelope, and submit directly.
+   *
+   * CRITICAL: Do NOT re-simulate! Re-simulation with populated auth entries
+   * strips Player 1's nonce from the footprint, causing INVOKE_HOST_FUNCTION_TRAPPED.
    */
   async importAndSignAuthEntry(
     player1SignedAuthEntryXdr: string,
+    hostTxXdr: string,
     player2Address: string,
     player2Points: bigint,
     player2Signer: Pick<contract.ClientOptions, 'signTransaction' | 'signAuthEntry'>,
     authTtlMinutes?: number
-  ): Promise<string> {
-    const gameParams = this.parseAuthEntry(player1SignedAuthEntryXdr);
+  ): Promise<any> {
+    // Parse the HOST's transaction (which has the correct footprint including Player 1's nonce)
+    const hostTx = TransactionBuilder.fromXDR(hostTxXdr, NETWORK_PASSPHRASE);
+    console.log('[importAndSignAuthEntry] Parsed HOST tx, source:', hostTx.source);
 
-    if (player2Address === gameParams.player1) {
-      throw new Error('Cannot play against yourself.');
+    const { injectSignedAuthEntry } = await import('@/utils/authEntryUtils');
+    const { rpc } = await import('@stellar/stellar-sdk');
+
+    // Reuse the working `injectSignedAuthEntry` utility to correctly swap Player 1's auth 
+    // and properly sign Player 2's auth entry if it isn't `sorobanCredentialsSourceAccount`
+    // Note: We cast `hostTx` to `contract.AssembledTransaction` because `injectSignedAuthEntry` 
+    // expects it, though it only strictly needs `simulationData.result.auth` 
+    // Since `hostTx` is just a `Transaction`, we need to mock the simulation data interface
+    // to match `injectSignedAuthEntry`'s expectations.
+
+    // A safer, more direct approach given the strict footprint requirements:
+    const player1SignedAuth = xdr.SorobanAuthorizationEntry.fromXDR(player1SignedAuthEntryXdr, 'base64');
+    const envelope = hostTx.toEnvelope();
+    const txBody = envelope.v1().tx();
+    const ops = txBody.operations();
+    const invokeOp = ops[0].body().invokeHostFunctionOp();
+    const authEntries = invokeOp.auth();
+
+    const player1SignedAddress = Address.fromScAddress(
+      player1SignedAuth.credentials().address().address()
+    ).toString();
+
+    let replaced = false;
+    for (let i = 0; i < authEntries.length; i++) {
+      try {
+        const credType = authEntries[i].credentials().switch().name;
+        if (credType === 'sorobanCredentialsAddress') {
+          const entryAddr = Address.fromScAddress(
+            authEntries[i].credentials().address().address()
+          ).toString();
+          if (entryAddr === player1SignedAddress) {
+            authEntries[i] = player1SignedAuth;
+            replaced = true;
+            console.log('[importAndSignAuthEntry] Replaced Player 1 auth at index', i);
+            break;
+          }
+        }
+      } catch { continue; }
     }
 
-    const buildClient = new ZkSeepClient({
-      contractId: this.contractId,
-      networkPassphrase: NETWORK_PASSPHRASE,
-      rpcUrl: RPC_URL,
-      publicKey: player2Address,
-    });
-
-    const tx = await buildClient.start_game({
-      session_id: gameParams.sessionId,
-      player1: gameParams.player1,
-      player2: player2Address,
-      player1_points: gameParams.player1Points,
-      player2_points: player2Points,
-    }, DEFAULT_METHOD_OPTIONS);
-
-    const validUntilLedgerSeq = authTtlMinutes
-      ? await calculateValidUntilLedger(RPC_URL, authTtlMinutes)
-      : await calculateValidUntilLedger(RPC_URL, MULTI_SIG_AUTH_TTL_MINUTES);
-
-    const txWithInjectedAuth = await injectSignedAuthEntry(
-      tx,
-      player1SignedAuthEntryXdr,
-      player2Address,
-      player2Signer,
-      validUntilLedgerSeq
-    );
-
-    const player2Client = this.createSigningClient(player2Address, player2Signer);
-    const player2Tx = player2Client.txFromXDR(txWithInjectedAuth.toXDR());
-
-    const needsSigning = await player2Tx.needsNonInvokerSigningBy();
-    if (needsSigning.includes(player2Address)) {
-      await player2Tx.signAuthEntries({ expiration: validUntilLedgerSeq });
+    if (!replaced) {
+      throw new Error('Could not find Player 1 auth entry in HOST transaction');
     }
 
-    return player2Tx.toXDR();
+    invokeOp.auth(authEntries);
+
+    // Rebuild the transaction object from the modified envelope XDR!
+    // Since we mutated `envelope` above, its XDR now contains Player 1's signature.
+    // If we just do `hostTx.sign(kp)`, it signs the *old* unsigned ops array inside hostTx.
+    const modifiedTxXdr = envelope.toXDR('base64');
+    const modifiedTx = TransactionBuilder.fromXDR(modifiedTxXdr, NETWORK_PASSPHRASE);
+
+    // Sign the envelope with the session keypair
+    const sessionSecret = globalThis.sessionStorage?.getItem('zk-seep-session-wallet');
+    if (!sessionSecret) throw new Error('Session wallet not found');
+    const kp = Keypair.fromSecret(sessionSecret);
+    console.log('[importAndSignAuthEntry] Signing modified tx as:', kp.publicKey());
+
+    // Sign the NEW builder object containing the correct auth array
+    modifiedTx.sign(kp);
+
+    // Try simulating the EXACT transaction we are about to send to verify footprint/auth traps!
+    const server = new rpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith('http://') });
+    try {
+      console.log('[importAndSignAuthEntry] Dry-running simulation to check for footprint/auth traps...');
+      const simMatch = await server.simulateTransaction(modifiedTx as any);
+      if (rpc.Api.isSimulationError(simMatch)) {
+        console.error('[importAndSignAuthEntry] SIMULATION PRE-CHECK FAILED:', simMatch.error);
+        if (simMatch.events) {
+          console.error('[importAndSignAuthEntry] Sim Events:', JSON.stringify(simMatch.events, null, 2));
+        }
+      } else {
+        console.log('[importAndSignAuthEntry] SIMULATION PRE-CHECK PASSED ✅');
+      }
+    } catch (e) {
+      console.error('[importAndSignAuthEntry] Failed to run simulation pre-check:', e);
+    }
+
+    // Submit directly — NO re-simulation
+    // We send the exact assembled transaction with the precise footprint that was simulated
+    const sendResponse = await server.sendTransaction(modifiedTx as any);
+    console.log('[importAndSignAuthEntry] sendTransaction status:', sendResponse.status);
+
+    if (sendResponse.status === 'ERROR') {
+      console.error('[importAndSignAuthEntry] sendTransaction immediate ERROR:', JSON.stringify(sendResponse, null, 2));
+      throw new Error(`Transaction send error: ${JSON.stringify(sendResponse)}`);
+    }
+
+    // Poll for completion
+    const maxWait = 30_000;
+    const start = Date.now();
+    let getResponse = await server.getTransaction(sendResponse.hash);
+    while (getResponse.status === 'NOT_FOUND' && Date.now() - start < maxWait) {
+      await new Promise(r => setTimeout(r, 1000));
+      getResponse = await server.getTransaction(sendResponse.hash);
+    }
+
+    if (getResponse.status === 'SUCCESS') {
+      console.log('[importAndSignAuthEntry] Transaction confirmed ✅');
+      return true;
+    } else {
+      console.error('[importAndSignAuthEntry] FAILED. getResponse:', JSON.stringify(getResponse, null, 2));
+
+      // Let's decode the meta XDR to see the exact VM trap reason if possible
+      try {
+        if (getResponse.resultMetaXdr) {
+          this.extractErrorFromDiagnostics(getResponse);
+        } else {
+          console.error('[importAndSignAuthEntry] No resultMetaXdr found on failed transaction object:', getResponse);
+        }
+      } catch (e) {
+        console.error('Failed to parse resultMetaXdr', e);
+      }
+
+      throw new Error(`Transaction failed: ${getResponse.status}`);
+    }
   }
 
   /**
-   * STEP 3: Finalize and submit the start_game transaction.
+   * STEP 3: No longer needed — importAndSignAuthEntry now submits directly.
+   * Kept as a no-op for backward compatibility.
    */
   async finalizeStartGame(
-    txXdr: string,
-    signerAddress: string,
-    signer: Pick<contract.ClientOptions, 'signTransaction' | 'signAuthEntry'>,
-    authTtlMinutes?: number
+    _txXdr: string,
+    _signerAddress: string,
+    _signer: Pick<contract.ClientOptions, 'signTransaction' | 'signAuthEntry'>,
+    _authTtlMinutes?: number
   ) {
-    const client = this.createSigningClient(signerAddress, signer);
-    const tx = client.txFromXDR(txXdr);
-    await tx.simulate();
-
-    const validUntilLedgerSeq = authTtlMinutes
-      ? await calculateValidUntilLedger(RPC_URL, authTtlMinutes)
-      : await calculateValidUntilLedger(RPC_URL, DEFAULT_AUTH_TTL_MINUTES);
-
-    const sentTx = await signAndSendViaLaunchtube(
-      tx,
-      DEFAULT_METHOD_OPTIONS.timeoutInSeconds,
-      validUntilLedgerSeq
-    );
-    return sentTx.result;
+    // This is now a no-op. The transaction was already submitted by importAndSignAuthEntry.
+    console.log('[finalizeStartGame] No-op — transaction already submitted by importAndSignAuthEntry');
+    return true;
   }
 
   /* ================================================================
@@ -472,22 +580,85 @@ export class ZkSeepService {
 
   private extractErrorFromDiagnostics(transactionResponse: any): string {
     try {
-      console.error('Transaction response:', JSON.stringify(transactionResponse, null, 2));
+      console.error('[extractErrorFromDiagnostics] Extracting from response:', transactionResponse);
+
+      // Attempt to decode resultMetaXdr for more detailed VM errors
+      if (transactionResponse?.resultMetaXdr) {
+        try {
+          let meta = transactionResponse.resultMetaXdr;
+
+          // Only parse if it's a string (in recent SDK versions, getTransaction returns the raw parsed object)
+          if (typeof meta === 'string') {
+            meta = xdr.TransactionMeta.fromXDR(meta, 'base64');
+          }
+
+          console.error('[extractErrorFromDiagnostics] Decoded Meta:', JSON.stringify(meta, null, 2));
+
+          // In stellar-sdk, TransactionMeta is a union. We can get the inner value safely:
+          const metaValue = meta.value ? meta.value() : meta._value;
+
+          if (metaValue && metaValue.sorobanMeta && typeof metaValue.sorobanMeta === 'function') {
+            const sorobanMeta = metaValue.sorobanMeta();
+            if (sorobanMeta && sorobanMeta.diagnosticEvents && typeof sorobanMeta.diagnosticEvents === 'function') {
+              const events = sorobanMeta.diagnosticEvents();
+              for (const event of events) {
+                const eventInfo = event.event();
+                const ext = eventInfo.body().v0();
+                const topics = ext.topics();
+
+                const isError = topics.some(t => {
+                  if (t.switch().name === 'scvSymbol') {
+                    const sym = t.sym().toString();
+                    return sym === 'error' || sym.includes('error');
+                  }
+                  return false;
+                });
+
+                if (isError) {
+                  // The data field contains the actual error message or code
+                  const data = ext.data();
+                  console.error('[extractErrorFromDiagnostics] Found VM TRAP ERROR:', JSON.stringify(data, null, 2));
+
+                  // Try to extract a readable string if it's a string/symbol or a vec of strings
+                  if (data) {
+                    try {
+                      const dataObj = JSON.parse(JSON.stringify(data));
+                      console.error('[extractErrorFromDiagnostics] Error details:', dataObj);
+                    } catch (e) { }
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[extractErrorFromDiagnostics] Failed to parse resultMetaXdr:', e);
+        }
+      }
 
       const diagnosticEvents = transactionResponse?.diagnosticEventsXdr ||
         transactionResponse?.diagnostic_events || [];
 
       for (const event of diagnosticEvents) {
-        if (event?.topics) {
-          const topics = Array.isArray(event.topics) ? event.topics : [];
+        let parsedEvent = event;
+        // if event is XDR string, decode it
+        if (typeof event === 'string') {
+          try {
+            parsedEvent = xdr.DiagnosticEvent.fromXDR(event, 'base64');
+          } catch {
+            continue; // Not parsable XDR
+          }
+        }
+
+        if (parsedEvent?.topics) {
+          const topics = Array.isArray(parsedEvent.topics) ? parsedEvent.topics : [];
           const hasErrorTopic = topics.some((topic: any) =>
             topic?.symbol === 'error' || topic?.error
           );
 
-          if (hasErrorTopic && event.data) {
-            if (typeof event.data === 'string') return event.data;
-            if (event.data.vec && Array.isArray(event.data.vec)) {
-              const messages = event.data.vec
+          if (hasErrorTopic && parsedEvent.data) {
+            if (typeof parsedEvent.data === 'string') return parsedEvent.data;
+            if (parsedEvent.data.vec && Array.isArray(parsedEvent.data.vec)) {
+              const messages = parsedEvent.data.vec
                 .filter((item: any) => item?.string)
                 .map((item: any) => item.string);
               if (messages.length > 0) return messages.join(': ');
