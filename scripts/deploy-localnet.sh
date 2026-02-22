@@ -56,18 +56,15 @@ echo "  mock-verifier: $VERIFIER_ID"
 # ── 5. Deploy zk-seep (skip auto-init) ─────────────
 echo ""
 echo "▸ Deploying zk-seep..."
+SOURCE_ADDR=$(stellar keys address $SOURCE)
 ZK_SEEP_ID=$(stellar contract deploy \
   --wasm target/wasm32v1-none/release/zk_seep.wasm \
   --source-account $SOURCE --network $NETWORK \
-  -- --admin $SOURCE --game_hub $MOCK_HUB_ID --verifier $VERIFIER_ID 2>&1 | tail -1)
+  -- --admin "$SOURCE_ADDR" --game_hub "$MOCK_HUB_ID" --verifier "$VERIFIER_ID" 2>&1 | tail -1)
 echo "  zk-seep: $ZK_SEEP_ID"
 
-# ── 6. Initialize zk-seep ──────────────────────────
-echo ""
-echo "▸ Initializing zk-seep with verifier: $VERIFIER_ID"
-stellar contract invoke --id $ZK_SEEP_ID --source-account $SOURCE --network $NETWORK \
-  -- initialize --admin $SOURCE --game_hub $MOCK_HUB_ID --verifier $VERIFIER_ID 2>/dev/null || \
-  echo "  (initialize may have been called during deploy, continuing...)"
+# Note: __constructor runs automatically at deploy time with the args above.
+# No separate initialize step needed.
 
 # ── 6. Update .env.local ───────────────────────────
 echo ""

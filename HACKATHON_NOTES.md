@@ -158,3 +158,54 @@ bun run dev
 2. Click **Create & Fund Game Wallet** in both (creates a session keypair and funds it via local Friendbot in one step).
 3. Player 1 Creates the game; Player 2 Joins.
 4. Enjoy the world's first fully verifiable, Zero-Knowledge P2P card game!
+
+---
+
+## Technical Highlight: Cross-Device WebRTC with TURN Relay
+
+### The Problem
+After deploying to Vercel, two players on different networks (e.g., laptop + phone) could not connect. The PeerJS `conn.on('open')` event never fired on the joiner's side, causing an infinite hang.
+
+### Root Cause
+WebRTC peer-to-peer connections require **ICE** (Interactive Connectivity Establishment) to discover a viable network path between two browsers. When both peers are behind symmetric NAT (common on mobile data, corporate WiFi, hotel networks), **STUN** servers alone cannot punch through — a **TURN relay** is required to proxy the data.
+
+### The Fix: Dual-Mode Transport with Metered TURN
+
+We implemented a dual-transport networking layer in `peerService.ts`:
+
+| Mode | Transport | When Used |
+|------|-----------|-----------|
+| **Local** | `BroadcastChannel` | `localhost` / `127.0.0.1` — instant, zero network |
+| **Deployed** | PeerJS (WebRTC) | Any other hostname — cross-device via STUN + TURN |
+
+For the deployed mode, we use Metered's global TURN relay infrastructure with credentials stored in env vars (`VITE_TURN_USERNAME`, `VITE_TURN_CREDENTIAL`). The ICE configuration covers every NAT/firewall scenario:
+
+- STUN on port 80
+- TURN UDP on port 80
+- TURN TCP on port 80 (corporate firewalls)
+- TURN on port 443 (HTTPS port, almost never blocked)
+- TURNS (TLS) on port 443 (maximum compatibility)
+
+A 15-second connection timeout was also added so the joiner gets a clear error instead of hanging forever.
+
+---
+
+## Technical Highlight: Multi-Sig Source Account Swap
+
+### The Problem
+When Player 2 received the HOST's pre-simulated transaction and signed it, the Stellar VM rejected it with `"signer does not belong to account"`.
+
+### Root Cause
+The transaction's `sourceAccount` was still set to Player 1's address (who originally simulated and built the XDR). Player 2 signed the envelope, but the network saw a mismatch: the outer envelope claimed Player 1 as the source, but the signature belonged to Player 2.
+
+Additionally, the sequence number in the XDR was Player 1's, causing `txBadSeq` after swapping the source.
+
+### The Fix
+In `importAndSignAuthEntry` (zkSeepService.ts), before Player 2 signs the envelope:
+
+1. **Swap `sourceAccount`** on the transaction body to Player 2's public key
+2. **Fetch Player 2's sequence number** from the network and inject `current + 1` (using BigInt for 64-bit safety)
+3. **Skip re-simulation** — re-simulating strips Player 1's nonce from the footprint (the "Double-Simulation Footprint Drop")
+4. **Submit directly** via `server.sendTransaction()`
+
+Player 1's authorization is preserved inside the invoke operation's `auth[]` array.

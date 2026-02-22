@@ -163,7 +163,7 @@ graph TB
 |---|---|
 | **ZK Seep Contract** (`contracts/zk-seep`) | On-chain game state, turn validation, ZK proof verification via external verifier |
 | **Mock Verifier** (`contracts/mock-verifier`) | Always returns `true` - used on testnet where UltraHonk exceeds the 400M CPU instruction cap |
-| **Game Hub** | Points tracking and leaderboard across all games in the Stellar Game Studio |
+| **Game Hub** | Official testnet Game Hub — points tracking and leaderboard across all games in the Stellar Game Studio |
 | **Noir Circuit** (`circuits/hand_contains`) | Poseidon2 hash commitment + card membership proof |
 | **Game Engine** (`src/game/`) | Full Seep rule engine in TypeScript - move generation, validation, scoring |
 | **Sync Service** | Dual-mode: BroadcastChannel (localhost) or PeerJS WebRTC (deployed/cross-device) |
@@ -273,21 +273,51 @@ This gives a **Web2-like gameplay experience** with full on-chain verifiability.
 
 ZK Seep uses a **dual-mode networking layer** that auto-selects the best transport:
 
-| Mode | Transport | When |
-|---|---|---|
-| **Local** | `BroadcastChannel` | `localhost` — instant, zero network deps |
-| **Deployed** | PeerJS (WebRTC) | Vercel / any non-localhost origin |
+### Localnet (Same Computer)
 
-**How it works:**
+On `localhost`, the app uses the browser-native **BroadcastChannel API** for instant, zero-latency communication between tabs. No network configuration required — messages are delivered in-process.
+
+```
+Tab 1 ←→ BroadcastChannel("zk-seep-{roomCode}") ←→ Tab 2
+```
+
+> **Note:** Open two normal browser tabs (not InPrivate/Incognito — `BroadcastChannel` doesn't bridge across browser contexts). Each tab automatically gets its own session wallet via `sessionStorage`.
+
+### Testnet / Deployed (Cross-Device)
+
+On deployed URLs (e.g., Vercel), the app switches to **PeerJS WebRTC** for direct browser-to-browser communication across devices and networks. To handle NAT traversal (essential when players are on mobile data, corporate WiFi, or behind firewalls), the app uses **Metered TURN relay servers**.
+
+```
+Browser A ←→ TURN Relay (global.relay.metered.ca) ←→ Browser B
+```
+
+The ICE configuration covers every network scenario:
+
+| Protocol | Port | Use Case |
+|----------|------|----------|
+| STUN | 80 | NAT discovery |
+| TURN UDP | 80 | Standard relay |
+| TURN TCP | 80 | Corporate firewall fallback |
+| TURN | 443 | HTTPS port (rarely blocked) |
+| TURNS (TLS) | 443 | Maximum compatibility |
+
+**TURN credentials** are stored as environment variables (not hardcoded):
+
+```env
+VITE_TURN_USERNAME=your_metered_username
+VITE_TURN_CREDENTIAL=your_metered_credential
+```
+
+If TURN credentials are not set, the app falls back to STUN-only (works on most home networks but may fail on restrictive ones).
+
+### How It Works
 
 1. Player 1 creates a room → gets a room code
 2. Player 2 enters the room code
 3. Game seed, bids, and moves are exchanged directly between browsers
-4. No central server required — fully decentralized
+4. No central game server required — fully decentralized
 
 Both players run the same deterministic game engine with the same seed. Move indices are exchanged, so both engines stay perfectly synchronized.
-
-> **Local testing:** Open two normal browser tabs (not InPrivate/Incognito — `BroadcastChannel` doesn't bridge across browser contexts). Each tab automatically gets its own session wallet via `sessionStorage`.
 
 ---
 
@@ -333,9 +363,9 @@ Both players run the same deterministic game engine with the same seed. Move ind
 
 | Contract | Address |
 |---|---|
-| ZK Seep | `CCMG3EP4S6UDNNYWWV5F7SE7A7DY53OZV3BRWTELSFOB2L2JGKQSBKWB` |
-| Mock Game Hub(used for localnet) | `CBWEN5RR2EWKGCWKH3QBA3LGNTQUZ6RXVRKY2FGBHPKELK4MJNFEAKHA` |
-| Mock Verifier | `CCYDEFG4NEJJPA6ABIGS2UGCEBD7U36ZFVYOY3DUMMKKJ6RV67IA644C` |
+| ZK Seep | `CCTI7YU4VJKERNO6Y2UHKVV4WNHIPDNAHG5OXNAMAJUKL5ZQBSEJ3QDV` |
+| Game Hub (official) | `CB4VZAT2U3UC6XFK3N23SKRF2NDCMP3QHJYMCHHFMZO7MRQO6DQ2EMYG` |
+| Mock Verifier | `CC64CBJ5KCVCJX4PO4MQXHNFL6AGIQ2MDG6UIFGZ5NWSKN5D2ZIHVEIX` |
 
 ---
 
@@ -369,28 +399,71 @@ bun run dev
 
 ### Running with Real ZK Verification (Localnet)
 
-The real UltraHonk ZK verifier requires ~367M CPU instructions — beyond the testnet 400M cap. Use localnet with unlimited limits:
+The real UltraHonk ZK verifier requires ~367M CPU instructions — beyond the testnet 400M cap. Use localnet with unlimited limits to run the **full ZK pipeline**.
+
+> **Note:** On localnet, the deploy script uses a **mock game hub** (since the official Game Hub only exists on testnet). The mock hub has the same interface but is deployed locally. The `VITE_MOCK_GAME_HUB_CONTRACT_ID` env var in `.env.local` reflects this.
+
+#### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) — for running the Stellar Quickstart node
+- [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools) — `stellar` binary in your PATH
+- [Rust](https://rustup.rs/) with `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
+- [Bun](https://bun.sh/) (or Node.js 18+)
+
+#### Step 1: Start the Stellar Localnet Node
 
 ```bash
-# 1. Start local Stellar node
 docker run --rm -it -p 8000:8000 --name stellar \
   stellar/quickstart:soroban-dev --local --limits unlimited
+```
 
-# 2. Fund deployer
+Wait until you see `Horizon    : listening on port 8000` before proceeding.
+
+#### Step 2: Configure Network & Fund Deployer
+
+```bash
 stellar network add localnet \
   --rpc-url "http://localhost:8000/soroban/rpc" \
   --network-passphrase "Standalone Network ; February 2017"
+
 stellar keys generate alice --network localnet --fund
-
-# 3. Deploy all contracts (builds, deploys, and wires up cross-contract IDs)
-chmod +x scripts/deploy-localnet.sh
-./scripts/deploy-localnet.sh
-
-# 4. Start frontend
-cd zk-seep-frontend && bun run dev
 ```
 
-Open two browser tabs at `localhost:5173`. Create & fund a game wallet in each, then create and join a game.
+#### Step 3: Deploy All Contracts
+
+The deploy script builds, deploys, and wires up all three contracts (`mock-game-hub`, `mock-verifier`, `zk-seep`) and writes the contract IDs to `.env.local`:
+
+```bash
+chmod +x scripts/deploy-localnet.sh
+./scripts/deploy-localnet.sh
+```
+
+Expected output:
+```
+  mock-game-hub: C...
+  mock-verifier: C...
+  zk-seep:       C...
+  ✅ .env.local updated
+```
+
+#### Step 4: Start the Frontend
+
+```bash
+cd zk-seep-frontend
+bun install
+bun run dev
+```
+
+#### Step 5: Play!
+
+1. Open **two normal browser tabs** at `http://localhost:5173`
+   - Do **not** use InPrivate/Incognito — `BroadcastChannel` doesn't bridge across browser contexts
+2. Click **Create & Fund Game Wallet** in both tabs
+   - Each tab gets its own session wallet via `sessionStorage` (no Freighter needed on localnet)
+3. Player 1 clicks **Create Game** → copy the room code
+4. Player 2 pastes the room code → clicks **Join Game**
+5. Both players authorize the game on-chain (multi-sig handshake)
+6. Play! House-building and bid moves generate real ZK proofs verified on-chain
 
 ---
 
@@ -450,10 +523,12 @@ This is not a weekend hackathon project. ZK Seep includes:
 
 ### Async Multi-Signature Handshake
 
-The `start_game` contract requires **both** players to `require_auth`, but they're on separate devices. Solving this required fixing two critical Stellar SDK bugs:
+The `start_game` contract requires **both** players to `require_auth`, but they're on separate devices. Solving this required fixing four critical issues:
 
 1. **Double-Simulation Footprint Drop** — Player 2 re-simulated the transaction locally, which dropped Player 1's nonce from the footprint. Fix: bypass standard submission and send the exact XDR footprint that Player 1 simulated.
 2. **`toEnvelope()` Immutability Trap** — `tx.toEnvelope()` returns a *disconnected copy*. Injecting Player 1's signature into the envelope didn't propagate to the submitted transaction. Fix: export the modified envelope to Base64, then reconstruct via `TransactionBuilder.fromXDR()`.
+3. **Source Account Mismatch** — The transaction's `sourceAccount` was Player 1's, but Player 2 signed the envelope. The network rejected it: `"signer does not belong to account"`. Fix: swap `sourceAccount` to Player 2 before signing, while preserving Player 1's auth inside the invoke op's `auth[]` array.
+4. **Sequence Number Offset** — After swapping the source, the sequence number was still Player 1's. Stellar requires `current + 1`. Fix: fetch Player 2's live sequence number and inject `BigInt(seq) + 1n` into the XDR.
 
 ### Off-Chain Turn Enforcement
 
