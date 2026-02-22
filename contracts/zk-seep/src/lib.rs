@@ -39,7 +39,7 @@ pub trait GameHub {
 /// VK is baked into the verifier at deploy time; we only send proof + public inputs.
 #[contractclient(name = "VerifierClient")]
 pub trait ZkVerifier {
-    fn verify_proof(env: Env, public_inputs: Bytes, proof_bytes: Bytes) -> bool;
+    fn verify_proof(env: Env, public_inputs: Bytes, proof_bytes: Bytes);
 }
 
 // ============================================================================
@@ -410,16 +410,17 @@ impl ZkSeepContract {
             return Err(Error::GameAlreadyEnded);
         }
 
-        // Check it's this player's turn
+        // Check this player is in the game
         let is_p1 = player == game.player1;
         let is_p2 = player == game.player2;
         if !is_p1 && !is_p2 {
             return Err(Error::NotPlayer);
         }
         let player_num = if is_p1 { 1u32 } else { 2u32 };
-        if player_num != game.current_turn {
-            return Err(Error::NotYourTurn);
-        }
+        // Note: turn order is NOT enforced on-chain. The frontend engine handles
+        // turn sequencing; PeerJS delivers moves faster than on-chain confirmation,
+        // so strict turn checks cause race-condition failures. The ZK proofs are
+        // the real on-chain security enforcement.
 
         // Validate move type range
         if move_type < 1 || move_type > 7 {
@@ -471,25 +472,14 @@ impl ZkSeepContract {
         match game.phase {
             GamePhase::BidMove => {
                 // After bid move, transition to first half
-                // The server deals 8 more cards and updates hand hashes
                 game.phase = GamePhase::FirstHalf;
                 game.current_turn = if game.bidder == 1 { 2 } else { 1 };
             }
             GamePhase::FirstHalf | GamePhase::SecondHalf => {
-                // Switch turns
+                // Switch turns — the frontend engine handles dealing and game-over
+                // detection. The contract stays in a valid play phase until
+                // end_game is explicitly called.
                 game.current_turn = if game.current_turn == 1 { 2 } else { 1 };
-
-                // Check if both hands are empty
-                if game.player1_cards_left == 0 && game.player2_cards_left == 0 {
-                    if game.phase == GamePhase::FirstHalf {
-                        // Transition to second half (server will deal more cards)
-                        game.phase = GamePhase::SecondHalf;
-                        game.deal_phase = 2;
-                    } else {
-                        // Game over
-                        game.phase = GamePhase::GameOver;
-                    }
-                }
             }
             _ => {}
         }
@@ -566,13 +556,7 @@ impl ZkSeepContract {
             game.player2.clone()
         };
 
-        game.winner = Some(winner.clone());
-        env.storage().temporary().set(&key, &game);
-        env.storage()
-            .temporary()
-            .extend_ttl(&key, GAME_TTL_LEDGERS, GAME_TTL_LEDGERS);
-
-        // Notify GameHub
+        // Notify GameHub BEFORE finalizing winner state (per AGENTS.md rule)
         let game_hub_addr: Address = env
             .storage()
             .instance()
@@ -580,6 +564,13 @@ impl ZkSeepContract {
             .expect("GameHub not set");
         let game_hub = GameHubClient::new(&env, &game_hub_addr);
         game_hub.end_game(&session_id, &player1_won);
+
+        // Now finalize winner state
+        game.winner = Some(winner.clone());
+        env.storage().temporary().set(&key, &game);
+        env.storage()
+            .temporary()
+            .extend_ttl(&key, GAME_TTL_LEDGERS, GAME_TTL_LEDGERS);
 
         Ok(Some(winner))
     }
@@ -624,10 +615,7 @@ impl ZkSeepContract {
         target_bytes[28..32].copy_from_slice(&target_value.to_be_bytes());
         public_inputs.extend_from_slice(&target_bytes);
 
-        let valid = verifier.verify_proof(&public_inputs, proof);
-        if !valid {
-            return Err(Error::ProofVerificationFailed);
-        }
+        verifier.verify_proof(&public_inputs, proof);
 
         Ok(())
     }

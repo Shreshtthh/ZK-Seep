@@ -3,7 +3,7 @@
  */
 
 import { Buffer } from 'buffer';
-import { xdr, Address, authorizeEntry } from '@stellar/stellar-sdk';
+import { xdr, Address, authorizeEntry, TransactionBuilder } from '@stellar/stellar-sdk';
 import { contract } from '@stellar/stellar-sdk';
 import { calculateValidUntilLedger } from './ledgerUtils';
 import { DEFAULT_AUTH_TTL_MINUTES } from './constants';
@@ -129,7 +129,7 @@ export async function injectSignedAuthEntry(
     console.log('[injectSignedAuthEntry] Signed Player 2 auth entry');
   }
 
-  // Update the transaction's auth entries
+  // Update the transaction's auth entries in simulationData
   tx.simulationData.result.auth = authEntries;
 
   return tx;
