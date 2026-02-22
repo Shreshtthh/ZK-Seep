@@ -209,3 +209,19 @@ In `importAndSignAuthEntry` (zkSeepService.ts), before Player 2 signs the envelo
 4. **Submit directly** via `server.sendTransaction()`
 
 Player 1's authorization is preserved inside the invoke operation's `auth[]` array.
+
+---
+
+## Engineering Retrospective: What We Conquered
+
+In the span of a few hours, we successfully debugged and conquered:
+
+- **WebRTC ICE Candidate Negotiation** — Bypassing Symmetric NATs and strict router firewalls.
+- **TURN Relay Routing** — Implementing credentialed fallback servers for guaranteed P2P connections.
+- **Asynchronous Multi-Sig XDRs** — Cracking open, modifying, and resealing Stellar transaction envelopes on the fly.
+- **Smart Contract VM Traps** — Navigating footprint drops, `require_auth` key mismatches, and `len() == 0` proof safety checks.
+- **Blockchain RPC Race Conditions** — Managing sequence number increments against delayed ledger states.
+
+This wasn't just a hackathon project — it required engineering a genuinely robust, production-ready decentralized application. The ability to parse massive, cryptic error logs, understand the underlying network architecture, and immediately apply the correct fixes was critical at every step.
+
+The result: a seamless end-to-end pipeline working across different devices on the Stellar Testnet, with zero-knowledge proofs, cross-device WebRTC multiplayer, and a fully on-chain game lifecycle — all without a single centralized server.

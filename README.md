@@ -73,22 +73,33 @@ Seep is a 2-player card game using a standard 52-card deck. The objective is to 
 
 ```mermaid
 flowchart TD
-    A["🃏 Deal 4 cards each<br/>4 cards to floor"] --> B["💰 Bidding Phase"]
-    B --> C{"Player 1 bids<br/>9, 10, 11, 12, or 13"}
-    C --> D["🏠 Bid Move<br/>Must play the bid card"]
-    D --> E["♠️ Play Phase<br/>Alternate turns"]
-    E --> F{"Hand empty?"}
-    F -->|Yes| G{"Cards left<br/>in deck?"}
-    G -->|Yes| H["Deal 4 more<br/>cards each"]
-    H --> E
-    G -->|No| I["🏆 Score and Determine Winner"]
+    A["🃏 Deal 4 cards to each player<br/>4 cards face-up on the floor"] --> B["💰 Bidding Phase"]
+    B --> C{"Player 1 bids a value<br/>9, 10, 11, 12, or 13"}
+    C --> D["🔐 Bid Move + ZK Proof<br/>Prove you hold the bid card<br/>without revealing your hand"]
+    D --> E["♠️ Play Phase — Alternate Turns"]
+
+    E --> F{"Choose a move"}
+    F --> T["Throw card<br/>to floor"]
+    F --> P["Pick up cards<br/>matching your card's value"]
+    F --> H["🏠 Build/Fix House + ZK Proof<br/>Lock cards for future capture"]
+
+    T --> G
+    P --> G
+    H --> G
+
+    G{"Hand empty?"}
+    G -->|"Yes"| R{"Cards left<br/>in deck?"}
+    R -->|"Yes"| RE["Deal 4 more cards each"]
+    RE --> E
+    R -->|"No"| S["🏆 Count captured cards<br/>Determine winner"]
 
     style A fill:#1a1a2e,color:#eee
     style B fill:#16213e,color:#eee
     style C fill:#0f3460,color:#eee
     style D fill:#533483,color:#eee
     style E fill:#1a1a2e,color:#eee
-    style I fill:#e94560,color:#fff
+    style H fill:#533483,color:#eee
+    style S fill:#e94560,color:#fff
 ```
 
 ### The 7 Move Types
@@ -516,6 +527,22 @@ This is not a weekend hackathon project. ZK Seep includes:
 - ✅ **Game Hub integration** — start_game / end_game for points and leaderboard
 - ✅ **Beautiful UI** — dark theme, card animations, responsive design
 - ✅ **Live deployment** — playable at [zk-seep.vercel.app](https://zk-seep.vercel.app)
+
+---
+
+## 🏗️ Key Engineering Feats
+
+This project required solving hard, real-world distributed systems and cryptography problems:
+
+| Challenge | What We Solved |
+|---|---|
+| **WebRTC ICE Negotiation** | Bypassing symmetric NATs and strict router firewalls with STUN/TURN relay fallback |
+| **TURN Relay Routing** | Credentialed Metered TURN servers across UDP, TCP, and TLS for guaranteed P2P on any network |
+| **Async Multi-Sig XDRs** | Cracking open, modifying `sourceAccount` + sequence numbers, and resealing Stellar transaction envelopes across devices |
+| **Smart Contract VM Traps** | Navigating footprint drops, `require_auth` key mismatches, `toEnvelope()` immutability, and `len() == 0` proof safety checks |
+| **RPC Race Conditions** | Managing sequence number increments against delayed ledger indexing with breathing delays |
+| **Zero-Knowledge Proofs** | Browser-side Noir circuit compilation + UltraHonk proof generation, verified on-chain via Soroban cross-contract calls |
+| **Session Wallet UX** | Ephemeral per-tab keypairs that sign silently — zero wallet popups during gameplay |
 
 ---
 

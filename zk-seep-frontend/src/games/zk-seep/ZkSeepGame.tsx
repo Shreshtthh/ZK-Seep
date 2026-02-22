@@ -535,13 +535,7 @@ export function ZkSeepGame({
               const ok = await onChainSignAndSubmitStartGame(msg.authXdr, msg.txXdr, joinerAddr);
               if (ok) {
                 peerService.send({ type: 'start_game_success' });
-                showStatus('Game started! Waiting for ledger sync...', 'info');
-
-                // Breathing delay: let the RPC node sync the sequence number
-                // after start_game before building the next transaction
-                await new Promise(r => setTimeout(r, 3000));
-
-                showStatus('Committing hand on-chain...', 'info');
+                showStatus('Game started! Committing hand...', 'info');
 
                 // Joiner commits their hand hash on-chain
                 try {
