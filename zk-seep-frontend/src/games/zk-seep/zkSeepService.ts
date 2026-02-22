@@ -345,21 +345,10 @@ export class ZkSeepService {
     // Sign the NEW builder object containing the correct auth array + source
     modifiedTx.sign(kp);
 
-    // Try simulating the EXACT transaction we are about to send to verify footprint/auth traps!
-    try {
-      console.log('[importAndSignAuthEntry] Dry-running simulation to check for footprint/auth traps...');
-      const simMatch = await server.simulateTransaction(modifiedTx as any);
-      if (rpc.Api.isSimulationError(simMatch)) {
-        console.error('[importAndSignAuthEntry] SIMULATION PRE-CHECK FAILED:', simMatch.error);
-        if (simMatch.events) {
-          console.error('[importAndSignAuthEntry] Sim Events:', JSON.stringify(simMatch.events, null, 2));
-        }
-      } else {
-        console.log('[importAndSignAuthEntry] SIMULATION PRE-CHECK PASSED ✅');
-      }
-    } catch (e) {
-      console.error('[importAndSignAuthEntry] Failed to run simulation pre-check:', e);
-    }
+    // NOTE: Do NOT re-simulate here! Re-simulating a multi-sig tx on Player 2's
+    // side causes the RPC to strip Player 1's nonce from the storage footprint,
+    // creating a false InvalidAction error ("Double-Simulation Footprint Drop").
+    // We trust the HOST's original simulation and submit directly.
 
     // Submit directly — NO re-simulation
     // We send the exact assembled transaction with the precise footprint that was simulated
