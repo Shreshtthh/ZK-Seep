@@ -313,23 +313,39 @@ export class ZkSeepService {
 
     invokeOp.auth(authEntries);
 
-    // Rebuild the transaction object from the modified envelope XDR!
-    // Since we mutated `envelope` above, its XDR now contains Player 1's signature.
-    // If we just do `hostTx.sign(kp)`, it signs the *old* unsigned ops array inside hostTx.
+    // ── Swap sourceAccount to Player 2 ──────────────────────────────
+    // The HOST built this tx with their own sourceAccount. When Player 2
+    // signs the outer envelope, the network requires the sourceAccount to
+    // match the signer. Player 1's authorization is preserved inside the
+    // invoke operation's auth entries array.
+    const player2AccountId = xdr.PublicKey.publicKeyTypeEd25519(
+      StrKey.decodeEd25519PublicKey(player2Address)
+    );
+    const newSourceMuxed = xdr.MuxedAccount.keyTypeEd25519(
+      player2AccountId.value()
+    );
+    txBody.sourceAccount(newSourceMuxed);
+
+    // Update the sequence number to Player 2's account
+    const server = new rpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith('http://') });
+    const player2Account = await server.getAccount(player2Address);
+    const newSeqNum = xdr.Int64.fromString(player2Account.sequenceNumber());
+    txBody.seqNum(newSeqNum);
+
+    // Rebuild the transaction object from the modified envelope XDR
     const modifiedTxXdr = envelope.toXDR('base64');
     const modifiedTx = TransactionBuilder.fromXDR(modifiedTxXdr, NETWORK_PASSPHRASE);
 
-    // Sign the envelope with the session keypair
+    // Sign the envelope with Player 2's session keypair
     const sessionSecret = globalThis.sessionStorage?.getItem('zk-seep-session-wallet');
     if (!sessionSecret) throw new Error('Session wallet not found');
     const kp = Keypair.fromSecret(sessionSecret);
-    console.log('[importAndSignAuthEntry] Signing modified tx as:', kp.publicKey());
+    console.log('[importAndSignAuthEntry] Signing modified tx as:', kp.publicKey(), '(swapped sourceAccount)');
 
-    // Sign the NEW builder object containing the correct auth array
+    // Sign the NEW builder object containing the correct auth array + source
     modifiedTx.sign(kp);
 
     // Try simulating the EXACT transaction we are about to send to verify footprint/auth traps!
-    const server = new rpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith('http://') });
     try {
       console.log('[importAndSignAuthEntry] Dry-running simulation to check for footprint/auth traps...');
       const simMatch = await server.simulateTransaction(modifiedTx as any);
