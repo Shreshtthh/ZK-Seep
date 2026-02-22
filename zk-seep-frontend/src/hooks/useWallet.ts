@@ -245,6 +245,15 @@ export function useWallet() {
     if (!publicKey) throw new Error('Freighter wallet not connected');
 
     const server = new rpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith('http://') });
+
+    try {
+      await server.getAccount(sessionPubKey);
+      console.log('[session-wallet] Already funded on Testnet, skipping Freighter popup');
+      return;
+    } catch {
+      // Account doesn't exist yet, proceed to create it
+    }
+
     const sourceAccount = await server.getAccount(publicKey);
 
     const tx = new TransactionBuilder(sourceAccount, {
