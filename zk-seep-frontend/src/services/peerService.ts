@@ -27,6 +27,33 @@ export type MessageHandler = (msg: SyncMessage) => void;
 const IS_LOCAL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
 /* ------------------------------------------------------------------ */
+/*  ICE servers (STUN + TURN for NAT traversal)                        */
+/* ------------------------------------------------------------------ */
+const ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  // Open Relay free TURN server (static auth, no signup needed)
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+];
+
+/** How long to wait for a WebRTC connection before timing out (ms) */
+const CONNECT_TIMEOUT_MS = 15_000;
+
+/* ------------------------------------------------------------------ */
 /*  PeerService                                                        */
 /* ------------------------------------------------------------------ */
 export class PeerService {
@@ -164,16 +191,7 @@ export class PeerService {
 
   private createRoomPeer(): Promise<string> {
     return new Promise((resolve, reject) => {
-      // Use public Google STUN servers for NAT traversal on testnet/deployed URLs
-      const peer = new Peer({
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-          ]
-        }
-      });
+      const peer = new Peer({ config: { iceServers: ICE_SERVERS } });
       this.peer = peer;
 
       peer.on('open', (id) => {
@@ -185,6 +203,7 @@ export class PeerService {
       peer.on('connection', (conn) => {
         console.log('[peer] Peer connected:', conn.peer);
         this.conn = conn;
+        this._connected = true;
         this.setupPeerConnection(conn);
       });
 
@@ -197,16 +216,14 @@ export class PeerService {
 
   private joinRoomPeer(roomCode: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const peer = new Peer({
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-          ]
-        }
-      });
+      const peer = new Peer({ config: { iceServers: ICE_SERVERS } });
       this.peer = peer;
+
+      // Timeout if WebRTC handshake takes too long
+      const timeout = setTimeout(() => {
+        console.error('[peer] Connection timed out after', CONNECT_TIMEOUT_MS, 'ms');
+        reject(new Error('Connection timed out — the host may have left or your network blocks WebRTC.'));
+      }, CONNECT_TIMEOUT_MS);
 
       peer.on('open', () => {
         console.log('[peer] Connecting to room:', roomCode);
@@ -214,18 +231,22 @@ export class PeerService {
         this.conn = conn;
 
         conn.on('open', () => {
-          console.log('[peer] Connected to host');
+          clearTimeout(timeout);
+          console.log('[peer] Connected to host ✅');
+          this._connected = true;
           this.setupPeerConnection(conn);
           resolve();
         });
 
         conn.on('error', (err) => {
+          clearTimeout(timeout);
           console.error('[peer] Connection error:', err);
           reject(err);
         });
       });
 
       peer.on('error', (err) => {
+        clearTimeout(timeout);
         console.error('[peer] Peer error:', err);
         reject(err);
       });
@@ -241,6 +262,7 @@ export class PeerService {
 
     conn.on('close', () => {
       console.log('[peer] Connection closed');
+      this._connected = false;
       this.conn = null;
     });
 
