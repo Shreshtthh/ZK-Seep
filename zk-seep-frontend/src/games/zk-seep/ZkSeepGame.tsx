@@ -374,7 +374,7 @@ export function ZkSeepGame({
             console.error('Host wallet not fully ready');
             return;
           }
-          const hostAddr = sessionWalletAddress || publicKey || '';
+          const hostAddr = getSessionPublicKey() || sessionWalletAddress || publicKey || '';
           const joinerAddr = msg.address;
 
           // Guard: prevent self-play (same wallet on both sides)
