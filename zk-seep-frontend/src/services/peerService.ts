@@ -164,7 +164,16 @@ export class PeerService {
 
   private createRoomPeer(): Promise<string> {
     return new Promise((resolve, reject) => {
-      const peer = new Peer();
+      // Use public Google STUN servers for NAT traversal on testnet/deployed URLs
+      const peer = new Peer({
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+          ]
+        }
+      });
       this.peer = peer;
 
       peer.on('open', (id) => {
@@ -188,7 +197,15 @@ export class PeerService {
 
   private joinRoomPeer(roomCode: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const peer = new Peer();
+      const peer = new Peer({
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+          ]
+        }
+      });
       this.peer = peer;
 
       peer.on('open', () => {
