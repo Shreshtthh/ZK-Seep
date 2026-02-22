@@ -5,6 +5,7 @@ import {
   MoveType, describeMoveType, moveRequiresZkProof, cardToString,
 } from '@/game';
 import type { Card, Pile, Move } from '@/game';
+import { RPC_URL } from '@/utils/constants';
 import { PlayingCard } from './components/PlayingCard';
 import { FloorPile } from './components/FloorPile';
 import { ScorePanel } from './components/ScorePanel';
@@ -12,6 +13,7 @@ import { BidPanel } from './components/BidPanel';
 import { GameOverPanel } from './components/GameOverPanel';
 import { useWallet } from '@/hooks/useWallet';
 import { useOnChain } from '@/hooks/useOnChain';
+import { initZkProofService, generateProof, computeHandHash } from '@/services/zkProofService';
 import { peerService } from '@/services/peerService';
 import type { SyncMessage } from '@/services/peerService';
 
@@ -107,7 +109,7 @@ export function ZkSeepGame({
   onGameComplete,
 }: ZkSeepGameProps) {
   const { publicKey, isConnected, isConnecting, connectFreighter, createSessionWallet, getSessionPublicKey, fundSessionWallet } = useWallet();
-  const { onChainMakeBid, onChainMakeMove, onChainEndGame } = useOnChain();
+  const { onChainPrepareStartGame, onChainSignAndSubmitStartGame, onChainCommitHand, onChainMakeBid, onChainMakeMove, onChainEndGame, isLocalnet } = useOnChain();
   const engineRef = useRef<SeepGame | null>(null);
   const seedRef = useRef<number | null>(null);
   const moveLogRef = useRef<number[]>([]);
@@ -294,27 +296,41 @@ export function ZkSeepGame({
     setStatusMsg(null);
   }, [clearSavedGame, clearSelection]);
 
+
+
   /* ---- Wallet Connect ---- */
   const handleConnectWallet = useCallback(async () => {
     try {
       setLoading(true);
-      await connectFreighter();
-      // Auto-create session wallet after Freighter connect
-      const sessionPub = createSessionWallet();
-      setSessionWalletAddress(sessionPub);
-      showStatus('Wallet connected! Fund your game wallet to play.', 'success');
+
+      if (isLocalnet) {
+        // On localnet, skip Freighter entirely — create + fund session wallet in one step
+        const sessionPub = createSessionWallet();
+        setSessionWalletAddress(sessionPub);
+        showStatus('Funding game wallet via friendbot...', 'info');
+        await fundSessionWallet('10');
+        setSessionWalletFunded(true);
+        showStatus('Game wallet created & funded! Ready to play.', 'success');
+      } else {
+        await connectFreighter();
+        // Auto-create session wallet after Freighter connect
+        const sessionPub = createSessionWallet();
+        setSessionWalletAddress(sessionPub);
+        showStatus('Wallet connected! Fund your game wallet to play.', 'success');
+      }
     } catch (err) {
       showStatus(`Failed to connect: ${err instanceof Error ? err.message : 'error'}`, 'error');
     } finally {
       setLoading(false);
     }
-  }, [connectFreighter, createSessionWallet, showStatus]);
+  }, [connectFreighter, createSessionWallet, fundSessionWallet, showStatus, isLocalnet]);
 
   /* ---- Fund Session Wallet ---- */
+
   const handleFundSessionWallet = useCallback(async () => {
     try {
       setLoading(true);
-      showStatus('Funding game wallet... (approve one Freighter popup)', 'info');
+      showStatus(isLocalnet ? 'Funding game wallet via friendbot...' : 'Funding game wallet... (approve one Freighter popup)', 'info');
       await fundSessionWallet('10');
       setSessionWalletFunded(true);
       showStatus('Game wallet funded! Ready to play.', 'success');
@@ -323,11 +339,11 @@ export function ZkSeepGame({
     } finally {
       setLoading(false);
     }
-  }, [fundSessionWallet, showStatus]);
+  }, [fundSessionWallet, showStatus, isLocalnet]);
 
   /* ---- Create Game ---- */
   const handleCreateGame = useCallback(async () => {
-    if (!publicKey) {
+    if (!publicKey && !sessionWalletAddress) {
       showStatus('Please connect your wallet first.', 'error');
       return;
     }
@@ -352,9 +368,75 @@ export function ZkSeepGame({
         console.log('[sync] Creator received:', msg.type, msg);
 
         if (msg.type === 'join') {
-          // Send seed to joiner
-          peerService.send({ type: 'seed', seed });
-          console.log('[sync] Sent seed to joiner:', seed);
+          // Joiner sent their address. Host prepares start_game and sends authXdr.
+          console.log('[sync] Join request from:', msg.address);
+          if (!sessionWalletAddress && !publicKey) {
+            console.error('Host wallet not fully ready');
+            return;
+          }
+          const hostAddr = sessionWalletAddress || publicKey || '';
+          const joinerAddr = msg.address;
+
+          // Guard: prevent self-play (same wallet on both sides)
+          if (hostAddr === joinerAddr) {
+            showStatus('⚠️ Cannot play against yourself! Open the other browser in a different tab/window so it creates a separate session wallet.', 'error');
+            console.error('[sync] Self-play detected:', hostAddr, '===', joinerAddr);
+            return;
+          }
+
+          showStatus('Preparing game on-chain (1/3)...', 'info');
+
+          // Using an IIFE to handle the async prepare call within the callback
+          (async () => {
+            try {
+              const result = await onChainPrepareStartGame(sid, hostAddr, joinerAddr);
+              if (result) {
+                peerService.send({ type: 'seed_and_auth', seed, sessionId: sid, hostAddress: hostAddr, authXdr: result.authXdr, txXdr: result.txXdr });
+                console.log('[sync] Sent authXdr + txXdr & seed to joiner');
+                showStatus('Waiting for opponent to authorize game (2/3)...', 'info');
+              } else {
+                showStatus('Failed to prepare start_game on-chain', 'error');
+              }
+            } catch (err) {
+              console.error('Failed prepare start_game:', err);
+              showStatus('Failed to prepare start_game', 'error');
+            }
+          })();
+
+        } else if (msg.type === 'start_game_success') {
+          // Joiner successfully submitted the start_game transaction
+          // Now Host commits their hand hash on-chain
+          refreshSnapshot();
+          showStatus('Game registered on-chain ✅ Committing hand...', 'info');
+
+          (async () => {
+            try {
+              await initZkProofService();
+              const handValues = engineRef.current!.players[0].hand.map((c: any) => c.value);
+              const hashHex = await computeHandHash(handValues, saltRef.current);
+              // Convert 0x-prefixed hex to Uint8Array(32)
+              const hashBytes = new Uint8Array(32);
+              const hex = hashHex.startsWith('0x') ? hashHex.slice(2) : hashHex;
+              for (let i = 0; i < 32; i++) hashBytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+              const cardsCount = handValues.length;
+
+              const ok = await onChainCommitHand(sid, hashBytes, cardsCount);
+              if (ok) {
+                showStatus('Hand committed ✅ Waiting for opponent...', 'info');
+              } else {
+                showStatus('Failed to commit hand on-chain', 'error');
+              }
+            } catch (err) {
+              console.error('Failed to commit hand:', err);
+              showStatus('Failed to commit hand', 'error');
+            }
+          })();
+
+        } else if (msg.type === 'hand_committed') {
+          // Joiner committed their hand — both hands are in, transition to bidding
+          setUiPhase('bidding');
+          showStatus('Both hands committed ✅ Player 1 bids first.', 'success');
+
         } else if (msg.type === 'bid') {
           // Opponent bid
           if (engineRef.current) {
@@ -398,8 +480,7 @@ export function ZkSeepGame({
         }
       });
 
-      refreshSnapshot();
-      showStatus(`Room created! Code: ${roomCode}. Share it with your opponent.`, 'success');
+      showStatus(`Room created! Code: ${roomCode}. Waiting for opponent to join...`, 'success');
     } catch (err) {
       showStatus(`Failed to create room: ${err instanceof Error ? err.message : 'error'}`, 'error');
     } finally {
@@ -415,8 +496,12 @@ export function ZkSeepGame({
 
   /* ---- Join Game ---- */
   const handleJoinGame = useCallback(async () => {
-    if (!publicKey) {
-      showStatus('Please connect your wallet first.', 'error');
+    if (!publicKey && !sessionWalletAddress) {
+      showStatus('Please create & fund your game wallet first.', 'error');
+      return;
+    }
+    if (!sessionWalletFunded) {
+      showStatus('Please fund your game wallet before joining.', 'error');
       return;
     }
     if (!joinCode.trim()) return;
@@ -432,17 +517,57 @@ export function ZkSeepGame({
       await peerService.joinRoom(roomCode, (msg: SyncMessage) => {
         console.log('[sync] Joiner received:', msg.type, msg);
 
-        if (msg.type === 'seed') {
+        if (msg.type === 'seed_and_auth') {
           // Init engine with the same seed
           const game = initEngineFromSeed(msg.seed);
           engineRef.current = game;
           seedRef.current = msg.seed;
           moveLogRef.current = [];
-          const sid = generateSessionId(); // local session ID for persistence
-          setSessionId(sid);
+          setSessionId(msg.sessionId); // Use the Host's session ID so all on-chain calls match
           setSnapshot(getSnapshot(game));
-          setUiPhase('bidding');
-          showStatus('Connected! Waiting for Player 1 to bid...', 'success');
+
+          showStatus('Authorizing game on-chain (3/3)...', 'info');
+          const joinerAddr = getSessionPublicKey() || sessionWalletAddress || publicKey || '';
+
+          // Using an IIFE to handle the async submit call within the callback
+          (async () => {
+            try {
+              const ok = await onChainSignAndSubmitStartGame(msg.authXdr, msg.txXdr, joinerAddr);
+              if (ok) {
+                peerService.send({ type: 'start_game_success' });
+                showStatus('Game started! Committing hand...', 'info');
+
+                // Joiner commits their hand hash on-chain
+                try {
+                  await initZkProofService();
+                  const handValues = engineRef.current!.players[1].hand.map((c: any) => c.value);
+                  const hashHex = await computeHandHash(handValues, saltRef.current);
+                  const hashBytes = new Uint8Array(32);
+                  const hex = hashHex.startsWith('0x') ? hashHex.slice(2) : hashHex;
+                  for (let i = 0; i < 32; i++) hashBytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+                  const cardsCount = handValues.length;
+
+                  const commitOk = await onChainCommitHand(msg.sessionId, hashBytes, cardsCount);
+                  if (commitOk) {
+                    peerService.send({ type: 'hand_committed' });
+                    setUiPhase('bidding');
+                    showStatus('Connected! Hand committed ✅ Waiting for Player 1 to bid...', 'success');
+                  } else {
+                    showStatus('Failed to commit hand on-chain', 'error');
+                  }
+                } catch (commitErr) {
+                  console.error('Failed to commit hand:', commitErr);
+                  showStatus('Failed to commit hand', 'error');
+                }
+              } else {
+                showStatus('Failed to submit start_game on-chain', 'error');
+              }
+            } catch (err) {
+              console.error('Failed to submit start_game:', err);
+              showStatus('Failed to submit start_game', 'error');
+            }
+          })();
+
         } else if (msg.type === 'bid') {
           if (engineRef.current) {
             try {
@@ -485,8 +610,9 @@ export function ZkSeepGame({
         }
       });
 
-      // Request seed from host
-      peerService.send({ type: 'join' });
+      // Send join request with our session wallet address (must match the signing key)
+      const myAddress = getSessionPublicKey() || sessionWalletAddress || publicKey || '';
+      peerService.send({ type: 'join', address: myAddress });
       showStatus(`Joining room...`, 'info');
     } catch (err) {
       showStatus(`Failed to join: ${err instanceof Error ? err.message : 'error'}`, 'error');
@@ -495,6 +621,29 @@ export function ZkSeepGame({
       setLoading(false);
     }
   }, [publicKey, joinCode, showStatus]);
+
+  /** Salt for ZK hand hash commitment (random per game session) */
+  const saltRef = useRef<bigint>(BigInt(Math.floor(Math.random() * 2 ** 64)));
+
+  /** Get current hand values as number array, padded to 12 */
+  const getHandValues = useCallback((): number[] => {
+    if (!engine) return [];
+    return engine.players[myPlayerIdx].hand.map((c: Card) => c.value);
+  }, [engine, myPlayerIdx]);
+
+  /** Generate a ZK proof (localnet only). Returns proof bytes or undefined. */
+  const maybeGenerateProof = useCallback(async (targetValue: number): Promise<Uint8Array | undefined> => {
+    if (!isLocalnet) return undefined;
+    try {
+      await initZkProofService();
+      const handValues = getHandValues();
+      const proof = await generateProof(handValues, saltRef.current, targetValue);
+      return proof;
+    } catch (err) {
+      console.warn('[zk] Proof generation failed (non-blocking):', err);
+      return undefined;
+    }
+  }, [isLocalnet, getHandValues]);
 
   /* ---- Submit bid ---- */
   const handleBid = useCallback((bidValue: number) => {
@@ -510,11 +659,15 @@ export function ZkSeepGame({
       // Broadcast to opponent
       broadcast({ type: 'bid', bidValue });
 
-      // Fire-and-forget on-chain bid
+      // Fire-and-forget on-chain bid (with ZK proof on localnet)
       if (sessionId) {
-        onChainMakeBid(sessionId, bidValue).catch(e =>
-          console.warn('[on-chain] bid failed (non-blocking):', e)
-        );
+        (async () => {
+          if (isLocalnet) showStatus('🔐 Generating ZK proof for bid...', 'info');
+          const proof = await maybeGenerateProof(bidValue);
+          onChainMakeBid(sessionId, bidValue, proof).catch(e =>
+            console.warn('[on-chain] bid failed (non-blocking):', e)
+          );
+        })();
       }
 
       // Persist
@@ -549,14 +702,21 @@ export function ZkSeepGame({
       // Broadcast the move INDEX to opponent
       broadcast({ type: 'move', moveIdx: idx });
 
-      // Fire-and-forget on-chain move
+      // Fire-and-forget on-chain move (with ZK proof on localnet for house moves)
       if (sessionId) {
         const scoreDelta = 0; // Scoring is tracked locally; on-chain gets final result
         const isSeep = false;
-        onChainMakeMove(
-          sessionId, move.type, move.card.value,
-          zkTargetValue ?? 0, scoreDelta, isSeep
-        ).catch(e => console.warn('[on-chain] move failed (non-blocking):', e));
+        (async () => {
+          let proof: Uint8Array | undefined;
+          if (zkTargetValue !== null && moveRequiresZkProof(move.type)) {
+            if (isLocalnet) showStatus('🔐 Generating ZK proof...', 'info');
+            proof = await maybeGenerateProof(zkTargetValue);
+          }
+          onChainMakeMove(
+            sessionId, move.type, move.card.value,
+            zkTargetValue ?? 0, scoreDelta, isSeep, proof
+          ).catch(e => console.warn('[on-chain] move failed (non-blocking):', e));
+        })();
       }
 
       // Check if game ended
@@ -633,14 +793,14 @@ export function ZkSeepGame({
         </div>
 
         {/* Wallet Connection */}
-        {!isConnected ? (
+        {!isConnected && !sessionWalletAddress ? (
           <div style={{
             display: 'flex', flexDirection: 'column', gap: '12px',
             padding: '20px', background: 'var(--glass)', borderRadius: '12px',
             border: '1px solid var(--glass-border)', maxWidth: '400px', width: '100%',
           }}>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', marginBottom: '8px' }}>
-              Connect your Stellar wallet to play
+              {isLocalnet ? 'Create a game wallet to play (localnet)' : 'Connect your Stellar wallet to play'}
             </p>
             <button
               className="seep-btn seep-btn--gold"
@@ -648,11 +808,13 @@ export function ZkSeepGame({
               disabled={loading || isConnecting}
               style={{ fontSize: '1rem', padding: '14px 36px', margin: '0 auto' }}
             >
-              {loading || isConnecting ? '⏳ Connecting...' : '🔗 Connect Wallet'}
+              {loading || isConnecting ? '⏳ Setting up...' : isLocalnet ? '🎮 Create & Fund Game Wallet' : '🔗 Connect Wallet'}
             </button>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.7rem', textAlign: 'center', opacity: 0.7 }}>
-              Requires <a href="https://freighter.app" target="_blank" rel="noopener" style={{ color: 'var(--accent-teal)' }}>Freighter</a> browser extension
-            </p>
+            {!isLocalnet && (
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.7rem', textAlign: 'center', opacity: 0.7 }}>
+                Requires <a href="https://freighter.app" target="_blank" rel="noopener" style={{ color: 'var(--accent-teal)' }}>Freighter</a> browser extension
+              </p>
+            )}
           </div>
         ) : (
           <div style={{

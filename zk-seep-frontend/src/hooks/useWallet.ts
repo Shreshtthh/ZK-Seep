@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useWalletStore } from '../store/walletSlice';
 import {
   requestAccess,
@@ -20,6 +20,7 @@ import {
 import { Buffer } from 'buffer';
 
 const SESSION_WALLET_KEY = 'zk-seep-session-wallet';
+const SAVE_KEY = 'zk-seep-game-state';
 
 export function useWallet() {
   const {
@@ -37,6 +38,30 @@ export function useWallet() {
     setError,
     disconnect: storeDisconnect,
   } = useWalletStore();
+
+  // On mount: validate stored session wallet still exists on-chain.
+  // After a Docker/localnet restart, the old ledger is gone and stored
+  // session wallets become stale. Detect this and auto-clear.
+  useEffect(() => {
+    const isLocalnet = RPC_URL.includes('localhost') || RPC_URL.includes('127.0.0.1');
+    if (!isLocalnet) return;
+
+    const secret = sessionStorage.getItem(SESSION_WALLET_KEY);
+    if (!secret) return;
+
+    try {
+      const kp = Keypair.fromSecret(secret);
+      const server = new rpc.Server(RPC_URL, { allowHttp: true });
+      server.getAccount(kp.publicKey()).catch(() => {
+        console.warn('[session-wallet] Stale wallet detected (account not on-chain), clearing...');
+        sessionStorage.removeItem(SESSION_WALLET_KEY);
+        sessionStorage.removeItem(SAVE_KEY);
+      });
+    } catch {
+      sessionStorage.removeItem(SESSION_WALLET_KEY);
+      sessionStorage.removeItem(SAVE_KEY);
+    }
+  }, []);
 
   /**
    * Connect via Freighter browser extension
@@ -168,10 +193,11 @@ export function useWallet() {
       },
 
       signAuthEntry: async (authEntryXdr: string) => {
-        // Sign the auth entry preimage with the session keypair
-        const preimage = xdr.HashIdPreimage.fromXDR(authEntryXdr, 'base64');
-        const payload = preimage.toXDR();
-        const signature = kp.sign(payload);
+        // authorizeEntry passes the HashIdPreimage as base64 XDR.
+        // We need to: decode → hash (SHA-256) → sign the hash
+        const preimageBytes = Buffer.from(authEntryXdr, 'base64');
+        const hashBytes = await globalThis.crypto.subtle.digest('SHA-256', preimageBytes);
+        const signature = kp.sign(Buffer.from(hashBytes));
         return {
           signedAuthEntry: signature.toString('base64'),
           signerAddress: kp.publicKey(),
@@ -181,16 +207,44 @@ export function useWallet() {
   }, []);
 
   /**
-   * Fund the session wallet by sending XLM from the connected Freighter wallet.
-   * This is the ONE transaction that requires user approval via Freighter.
+   * Fund the session wallet.
+   * - On localnet (http://localhost): use the local friendbot directly (no Freighter needed).
+   * - On testnet/mainnet: send XLM from the connected Freighter wallet (one popup).
    */
   const fundSessionWallet = useCallback(async (amountXlm: string = '10'): Promise<void> => {
-    if (!publicKey) throw new Error('Freighter wallet not connected');
-
     const sessionPubKey = getSessionPublicKey();
     if (!sessionPubKey) throw new Error('Session wallet not created');
 
-    const server = new rpc.Server(RPC_URL);
+    const isLocalnet = RPC_URL.includes('localhost') || RPC_URL.includes('127.0.0.1');
+
+    if (isLocalnet) {
+      // Check if account already exists on-chain before hitting friendbot
+      const friendbotUrl = RPC_URL.replace('/soroban/rpc', '').replace(/\/+$/, '');
+      try {
+        const server = new rpc.Server(RPC_URL, { allowHttp: true });
+        await server.getAccount(sessionPubKey);
+        // Account already exists — no need to fund
+        console.log('[session-wallet] Already funded, skipping friendbot');
+        return;
+      } catch {
+        // Account doesn't exist yet — fund it
+      }
+
+      const res = await fetch(`${friendbotUrl}/friendbot?addr=${sessionPubKey}`);
+      if (!res.ok) {
+        const text = await res.text();
+        if (!text.includes('already funded')) {
+          throw new Error(`Local friendbot failed (${res.status}): ${text}`);
+        }
+      }
+      console.log('[session-wallet] Funded via local friendbot');
+      return;
+    }
+
+    // Testnet/Mainnet: fund via Freighter
+    if (!publicKey) throw new Error('Freighter wallet not connected');
+
+    const server = new rpc.Server(RPC_URL, { allowHttp: RPC_URL.startsWith('http://') });
     const sourceAccount = await server.getAccount(publicKey);
 
     const tx = new TransactionBuilder(sourceAccount, {

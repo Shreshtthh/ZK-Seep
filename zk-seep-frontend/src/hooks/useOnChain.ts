@@ -4,16 +4,17 @@
  * All transactions use the session wallet signer so they execute
  * silently (no Freighter popup per move).
  *
- * When the mock verifier is deployed on testnet, proof bytes are
- * sent as empty — the mock always returns true.
+ * On localnet with the real verifier, real proof bytes are expected.
+ * On testnet with the mock verifier, empty proof bytes are accepted.
  */
 import { useCallback, useRef } from 'react';
 import { ZkSeepService } from '../games/zk-seep/zkSeepService';
 import { useWallet } from './useWallet';
-import { ZK_SEEP_CONTRACT } from '@/utils/constants';
+import { ZK_SEEP_CONTRACT, RPC_URL } from '@/utils/constants';
 import { Buffer } from 'buffer';
 
 const EMPTY_PROOF = Buffer.alloc(0);
+const isLocalnet = RPC_URL.includes('localhost') || RPC_URL.includes('127.0.0.1');
 
 export function useOnChain() {
     const { getSessionSigner, getSessionPublicKey } = useWallet();
@@ -26,43 +27,76 @@ export function useOnChain() {
             return null;
         }
         if (!serviceRef.current) {
-            serviceRef.current = new ZkSeepService(ZK_SEEP_CONTRACT);
+            try {
+                serviceRef.current = new ZkSeepService(ZK_SEEP_CONTRACT);
+            } catch (err) {
+                console.warn('[on-chain] Failed to init ZkSeepService (bindings spec may need regenerating):', err);
+                return null;
+            }
         }
         return serviceRef.current;
     }, []);
 
     /**
-     * Call start_game on-chain.
-     * For the hackathon demo, both "players" are session wallets on the same device
-     * or the session wallet acts as the signable party.
+     * Host: Prepare start_game transaction and sign auth entry
      */
-    const onChainStartGame = useCallback(async (
+    const onChainPrepareStartGame = useCallback(async (
         sessionId: number,
-        player1Address: string,
-        player2Address: string,
+        hostAddress: string,
+        joinerAddress: string,
+    ): Promise<{ authXdr: string; txXdr: string } | null> => {
+        const svc = getService();
+        if (!svc) return null;
+
+        try {
+            const signer = getSessionSigner();
+            console.log('[on-chain] prepare start_game:', sessionId);
+
+            const result = await svc.prepareStartGame(
+                sessionId,
+                hostAddress,
+                joinerAddress,
+                BigInt(0),
+                BigInt(0),
+                signer,
+            );
+
+            console.log('[on-chain] prepare success, generated authXdr + txXdr');
+            return result;
+        } catch (err) {
+            console.error('[on-chain] prepare start_game failed:', err);
+            return null;
+        }
+    }, [getService, getSessionSigner]);
+
+    /**
+     * Joiner: Receive authXdr, sign, and submit start_game transaction
+     */
+    const onChainSignAndSubmitStartGame = useCallback(async (
+        authXdr: string,
+        txXdr: string,
+        joinerAddress: string,
     ): Promise<boolean> => {
         const svc = getService();
         if (!svc) return false;
 
         try {
             const signer = getSessionSigner();
-            console.log('[on-chain] start_game:', sessionId);
+            console.log('[on-chain] import, sign, and submit start_game...');
 
-            // Use simplified single-signer approach for demo:
-            // The session wallet signs for the player on this device.
-            await svc.prepareStartGame(
-                sessionId,
-                player1Address,
-                player2Address,
-                BigInt(0), // points
-                BigInt(0), // points
+            // Use the HOST's tx XDR directly (no re-simulation)
+            await svc.importAndSignAuthEntry(
+                authXdr,
+                txXdr,
+                joinerAddress,
+                BigInt(0),
                 signer,
             );
 
-            console.log('[on-chain] start_game success');
+            console.log('[on-chain] start_game success ✅');
             return true;
         } catch (err) {
-            console.error('[on-chain] start_game failed:', err);
+            console.error('[on-chain] sign and submit start_game failed:', err);
             return false;
         }
     }, [getService, getSessionSigner]);
@@ -101,11 +135,12 @@ export function useOnChain() {
 
     /**
      * Make a bid on-chain.
-     * Uses empty proof (mock verifier always returns true).
+     * Accepts optional proof bytes; uses empty proof on testnet (mock verifier).
      */
     const onChainMakeBid = useCallback(async (
         sessionId: number,
         bidValue: number,
+        proofBytes?: Uint8Array,
     ): Promise<boolean> => {
         const svc = getService();
         if (!svc) return false;
@@ -113,17 +148,19 @@ export function useOnChain() {
         const playerAddress = getSessionPublicKey();
         if (!playerAddress) return false;
 
+        const proof = proofBytes ? Buffer.from(proofBytes) : EMPTY_PROOF;
+
         try {
             const signer = getSessionSigner();
-            console.log('[on-chain] make_bid:', sessionId, 'value:', bidValue);
+            console.log('[on-chain] make_bid:', sessionId, 'value:', bidValue, 'proof:', proof.length, 'bytes');
             await svc.makeBid(
                 sessionId,
                 playerAddress,
                 bidValue,
-                EMPTY_PROOF,
+                proof,
                 signer,
             );
-            console.log('[on-chain] make_bid success');
+            console.log('[on-chain] make_bid success ✅');
             return true;
         } catch (err) {
             console.error('[on-chain] make_bid failed:', err);
@@ -133,8 +170,7 @@ export function useOnChain() {
 
     /**
      * Make a move on-chain.
-     * For house-building moves (types 2-6), proof is required but
-     * the mock verifier accepts empty proof.
+     * Accepts optional proof bytes for house-building moves (types 2-6).
      */
     const onChainMakeMove = useCallback(async (
         sessionId: number,
@@ -143,6 +179,7 @@ export function useOnChain() {
         targetValue: number,
         scoreDelta: number,
         isSeep: boolean,
+        proofBytes?: Uint8Array,
     ): Promise<boolean> => {
         const svc = getService();
         if (!svc) return false;
@@ -150,9 +187,11 @@ export function useOnChain() {
         const playerAddress = getSessionPublicKey();
         if (!playerAddress) return false;
 
+        const proof = proofBytes ? Buffer.from(proofBytes) : EMPTY_PROOF;
+
         try {
             const signer = getSessionSigner();
-            console.log('[on-chain] make_move:', sessionId, 'type:', moveType);
+            console.log('[on-chain] make_move:', sessionId, 'type:', moveType, 'proof:', proof.length, 'bytes');
             await svc.makeMove(
                 sessionId,
                 playerAddress,
@@ -161,10 +200,10 @@ export function useOnChain() {
                 targetValue,
                 scoreDelta,
                 isSeep,
-                EMPTY_PROOF,
+                proof,
                 signer,
             );
-            console.log('[on-chain] make_move success');
+            console.log('[on-chain] make_move success ✅');
             return true;
         } catch (err) {
             console.error('[on-chain] make_move failed:', err);
@@ -188,7 +227,7 @@ export function useOnChain() {
             const signer = getSessionSigner();
             console.log('[on-chain] end_game:', sessionId);
             await svc.endGame(sessionId, playerAddress, signer);
-            console.log('[on-chain] end_game success');
+            console.log('[on-chain] end_game success ✅');
             return true;
         } catch (err) {
             console.error('[on-chain] end_game failed:', err);
@@ -197,10 +236,12 @@ export function useOnChain() {
     }, [getService, getSessionSigner, getSessionPublicKey]);
 
     return {
-        onChainStartGame,
+        onChainPrepareStartGame,
+        onChainSignAndSubmitStartGame,
         onChainCommitHand,
         onChainMakeBid,
         onChainMakeMove,
         onChainEndGame,
+        isLocalnet,
     };
 }
