@@ -1187,7 +1187,8 @@ export function ZkSeepGame({
                     const globalIdx = legalMoves.findIndex(m =>
                       m.type === move.type &&
                       m.card.suit === move.card.suit && m.card.value === move.card.value &&
-                      JSON.stringify(m.piles?.map(p => p.value)) === JSON.stringify(move.piles?.map(p => p.value))
+                      JSON.stringify(m.piles?.map(p => p.cards.map(c => `${c.value}-${c.suit}`))) ===
+                      JSON.stringify(move.piles?.map(p => p.cards.map(c => `${c.value}-${c.suit}`)))
                     );
                     return (
                       <button

@@ -13,7 +13,9 @@ import { useWallet } from './useWallet';
 import { ZK_SEEP_CONTRACT, RPC_URL } from '@/utils/constants';
 import { Buffer } from 'buffer';
 
-const EMPTY_PROOF = Buffer.alloc(0);
+// On testnet, the contract checks proof.len() == 0 → Error(Contract, #8) ProofRequired.
+// A 1-byte dummy proof passes the length check and is accepted by the mock verifier.
+const EMPTY_PROOF = Buffer.alloc(1);
 const isLocalnet = RPC_URL.includes('localhost') || RPC_URL.includes('127.0.0.1');
 
 export function useOnChain() {

@@ -29,28 +29,33 @@ const IS_LOCAL = window.location.hostname === 'localhost' || window.location.hos
 /* ------------------------------------------------------------------ */
 /*  ICE servers (Metered STUN + TURN for reliable NAT traversal)       */
 /* ------------------------------------------------------------------ */
+const TURN_USER = import.meta.env.VITE_TURN_USERNAME || '';
+const TURN_CRED = import.meta.env.VITE_TURN_CREDENTIAL || '';
+
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.relay.metered.ca:80' },
-  {
-    urls: 'turn:global.relay.metered.ca:80',
-    username: 'b02b75bb9d427153d585d5c2',
-    credential: 'nkd+N7sAWv8SDNIS',
-  },
-  {
-    urls: 'turn:global.relay.metered.ca:80?transport=tcp',
-    username: 'b02b75bb9d427153d585d5c2',
-    credential: 'nkd+N7sAWv8SDNIS',
-  },
-  {
-    urls: 'turn:global.relay.metered.ca:443',
-    username: 'b02b75bb9d427153d585d5c2',
-    credential: 'nkd+N7sAWv8SDNIS',
-  },
-  {
-    urls: 'turns:global.relay.metered.ca:443?transport=tcp',
-    username: 'b02b75bb9d427153d585d5c2',
-    credential: 'nkd+N7sAWv8SDNIS',
-  },
+  ...(TURN_USER && TURN_CRED ? [
+    {
+      urls: 'turn:global.relay.metered.ca:80',
+      username: TURN_USER,
+      credential: TURN_CRED,
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+      username: TURN_USER,
+      credential: TURN_CRED,
+    },
+    {
+      urls: 'turn:global.relay.metered.ca:443',
+      username: TURN_USER,
+      credential: TURN_CRED,
+    },
+    {
+      urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+      username: TURN_USER,
+      credential: TURN_CRED,
+    },
+  ] : []),
 ];
 
 /** How long to wait for a WebRTC connection before timing out (ms) */
