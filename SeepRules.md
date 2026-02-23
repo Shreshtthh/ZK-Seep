@@ -205,7 +205,7 @@ Houses are the core strategic element of Seep. Understanding them deeply is esse
 
 ### The Two-House Limit
 
-A critical rule: **each player can have at most 2 fixed houses** on the floor at any time. This prevents indefinite stalling. You must capture one of your houses before creating a third.
+A critical rule: there can be at most **2 fixed houses on the floor** at any time (total, not per player). This prevents indefinite stalling. A house must be captured before a third can be created.
 
 ### The "Last Jack" Trick
 
@@ -270,7 +270,7 @@ Prioritize protecting:
 ### 🪤 3. Set Traps with Throws
 
 Sometimes throwing a low-value card is strategic:
-- **Bait:** Throw a 3♣ when the floor has a 3♥. Your opponent might capture with a 3, but if you have a plan to Seep the resulting sparse floor, that's fine.
+- **Safe throw:** If three 3s have already been played and you hold the last 3, throwing it is completely safe — your opponent has no 3 to capture it with, making it impossible for them to Seep you off that card.
 - **Deny captures:** If you can't capture anything useful, throw your least valuable card (a non-Spade, non-Ace low card).
 
 ### 🛡️ 4. Prevent Seep Against You
@@ -453,7 +453,7 @@ HOUSES:   Value 9-13 only
           Unfixed → anyone can capture
           Fixed (🔒) → only exact value captures
           Need another card of same value to build/fix (ZK proven)
-          Max 2 fixed houses per player
+          Max 2 fixed houses on the floor (total)
 
 WINNING:  Score > 50 points
 ```
