@@ -57,6 +57,8 @@ The player commits a **Poseidon2 hash** of their hand at the start of the game. 
 
 Seep is a 2-player card game using a standard 52-card deck. The objective is to capture cards from the floor and score points.
 
+> 📖 **Want the full deep-dive?** Check out **[SeepRules.md](../SeepRules.md)** for exhaustive rules, advanced strategy tips (card memorization, the "last Jack" power play, Seep prevention), worked examples from real game situations, and common mistakes to avoid.
+
 ### Card Values & Scoring
 
 | Cards | Game Value | Score |
