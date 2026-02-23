@@ -38,6 +38,21 @@ mod mock_hub {
     }
 }
 
+// Mock ZK verifier that accepts any proof (for testing moves that require proofs)
+mod mock_verifier {
+    use soroban_sdk::{contract, contractimpl, Bytes, Env};
+
+    #[contract]
+    pub struct MockVerifier;
+
+    #[contractimpl]
+    impl MockVerifier {
+        pub fn verify_proof(_env: Env, _public_inputs: Bytes, _proof_bytes: Bytes) {
+            // Always succeeds — no-op
+        }
+    }
+}
+
 /// Helper: create a test environment and deploy the contract with mock dependencies
 fn setup_test() -> (Env, Address, Address, Address) {
     let env = Env::default();
@@ -52,6 +67,26 @@ fn setup_test() -> (Env, Address, Address, Address) {
     let verifier = Address::generate(&env);
 
     // Deploy our contract
+    let contract_id = env.register(
+        ZkSeepContract,
+        (&admin, &game_hub, &verifier),
+    );
+
+    let player1 = Address::generate(&env);
+    let player2 = Address::generate(&env);
+
+    (env, contract_id, player1, player2)
+}
+
+/// Helper: deploy with a working mock verifier (for tests that call make_bid/make_move)
+fn setup_test_with_verifier() -> (Env, Address, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let game_hub = env.register(mock_hub::MockGameHub, ());
+    let verifier = env.register(mock_verifier::MockVerifier, ());
+
     let contract_id = env.register(
         ZkSeepContract,
         (&admin, &game_hub, &verifier),
@@ -138,4 +173,49 @@ fn test_update_hand_hash() {
     let game = client.get_game(&1u32);
     assert_eq!(game.player1_hand_hash, new_hash);
     assert_eq!(game.player1_cards_left, 12);
+}
+
+#[test]
+fn test_end_game_from_playing_phase() {
+    let (env, contract_id, player1, player2) = setup_test_with_verifier();
+    let client = ZkSeepContractClient::new(&env, &contract_id);
+
+    // 1. Start game
+    client.start_game(&1u32, &player1, &player2, &100i128, &100i128);
+
+    // 2. Commit both hands
+    let hash1 = BytesN::from_array(&env, &[1u8; 32]);
+    let hash2 = BytesN::from_array(&env, &[2u8; 32]);
+    client.commit_hand(&1u32, &player1, &hash1, &4u32);
+    client.commit_hand(&1u32, &player2, &hash2, &4u32);
+
+    let game = client.get_game(&1u32);
+    assert_eq!(game.phase, GamePhase::Bidding);
+
+    // 3. Player 1 bids (bid_value=9, dummy proof accepted by mock verifier)
+    let dummy_proof = soroban_sdk::Bytes::from_slice(&env, &[0u8; 1]);
+    client.make_bid(&1u32, &player1, &9u32, &dummy_proof);
+
+    let game = client.get_game(&1u32);
+    assert_eq!(game.phase, GamePhase::BidMove);
+
+    // 4. Player 1 makes the bid move (Throw=1, no ZK proof needed for type 1)
+    let empty_proof = soroban_sdk::Bytes::from_slice(&env, &[0u8; 1]);
+    client.make_move(
+        &1u32, &player1,
+        &1u32,  // move_type: Throw
+        &9u32,  // card_value
+        &0u32,  // target_value (not used for Throw)
+        &0u32,  // score_delta
+        &false, // is_seep
+        &empty_proof,
+    );
+
+    let game = client.get_game(&1u32);
+    assert_eq!(game.phase, GamePhase::FirstHalf);
+
+    // 5. Call end_game from FirstHalf — this is the bug fix we're testing!
+    //    Previously this would fail with Error(Contract, #4) InvalidPhase.
+    let result = client.end_game(&1u32);
+    assert!(result.is_some()); // Winner should be determined
 }

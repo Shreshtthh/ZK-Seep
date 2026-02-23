@@ -536,7 +536,13 @@ impl ZkSeepContract {
             .get(&key)
             .ok_or(Error::GameNotFound)?;
 
-        if game.phase != GamePhase::GameOver {
+        // Allow end_game from active play phases — the frontend engine handles
+        // game-over detection. The contract stays in FirstHalf/SecondHalf
+        // until end_game is explicitly called.
+        let valid_phase = game.phase == GamePhase::FirstHalf
+            || game.phase == GamePhase::SecondHalf
+            || game.phase == GamePhase::GameOver;
+        if !valid_phase {
             return Err(Error::InvalidPhase);
         }
 
