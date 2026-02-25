@@ -2,7 +2,7 @@
 
 > *Bringing South Asia's most popular card game to blockchain, with zero-knowledge proofs to eliminate the cheating that plagues existing platforms.*
 
-**[🎮 Play Live](https://zk-seep.vercel.app)** · **[📜 Contract on Testnet](https://stellar.expert/explorer/testnet/contract/CBMD4JH436B663IZAQLX5RHNYICU4COZQIXOOLWQU6HVM2W555CGNCDM)**
+**[🎮 Play Live](https://zk-seep.vercel.app)** · **[📜 Contract on Testnet](https://stellar.expert/explorer/testnet/contract/CCTI7YU4VJKERNO6Y2UHKVV4WNHIPDNAHG5OXNAMAJUKL5ZQBSEJ3QDV)**
 
 ---<img width="659" height="652" alt="ZK-Seep" src="https://github.com/user-attachments/assets/a9815860-af1c-4d7c-8ecc-7136615cd0d9" />
 
