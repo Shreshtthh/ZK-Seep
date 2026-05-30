@@ -72,3 +72,40 @@ The assumption—"State is sent from contracts to noir which produce a zk proof 
 4. **Acceptance:** The Verifier returns true or false back to the main game contract. If it is valid, the contract updates the official on-chain game state.
 
 *(Note regarding the Verifier: On the Stellar Testnet, the app uses a "Mock Verifier" that always returns true because verifying a real UltraHonk proof requires ~367M CPU instructions, which exceeds the testnet's 400M limit. A real UltraHonk verifier is used when running on localnet with unlimited limits).*
+
+
+Let's tear this project down layer by layer, folder by folder, to see exactly what each part is doing.
+
+### 1. circuits/ (The Cryptographic Guard)
+This folder contains the Noir codebase responsible for generating zero-knowledge proofs on the client side. It ensures information privacy and mathematical trust during gameplay.
+- `poseidon2_hash/`: Contains a standard Noir circuit that takes a player's private hand array (12 slots) and a secret salt value, hashing them using the UltraHonk-friendly Poseidon2 algorithm. This generates the `hand_hash` commitment submitted to the blockchain at the beginning of the round.
+- `hand_contains/`: This is the heavy lifter. When a player declares a move (like a bid or a house-build), this circuit takes their private hand array and salt, hashes them to verify it matches the public `hand_hash` on-chain, and loops through the array to assert that a specific public card value exists in that hand.
+- `no_high_cards/`: In Seep, if a player's starting four cards are all below a 9, they have the right to demand a re-deal. This circuit lets them cryptographically prove they don't hold any card $\ge 9$ without exposing what cards they actually have.
+
+### 2. contracts/ (The On-Chain Arbiter)
+This directory handles the smart contracts written in Rust using the Soroban SDK. They enforce the rules on the Stellar blockchain.
+- `zk-seep/`: The core game contract. It manages ongoing games, active players, turn-taking, and scoring. Crucially, it acts as the gateway for verification. When a player sends a transaction to make a move, this contract consumes the public inputs and the ZK proof bytes, forwarding them to the verifier contract.
+- `mock-verifier/`: A safety valve for Stellar's Testnet. Verifying UltraHonk ZK proofs eats up roughly 367M CPU instructions, nearly hitting Stellar's Testnet ceiling of 400M instructions per transaction. This mock contract simulates a real verifier but instantly returns true so the app can be fully tested on Testnet without crashing.
+- `mock-game-hub/`: A simple mock setup that mimics the official Stellar Game Studio Hub to test how points are universally updated and tracked globally once a match concludes.
+
+### 3. zk-seep-frontend/src/game/ (The Engine Room)
+This is a pure TypeScript implementation of the game of Seep. Both players run this identical engine locally in their browsers.
+Instead of waiting for 5-second blockchain confirmation times for every single action, the local engines compute state transitions instantly when they receive input.
+- `Card.ts`, `Deck.ts`, `Pile.ts`, `Center.ts`: Pure data structures representing the cards, the deck, a single player's pile, and the "floor" layouts.
+- `Player.ts`: Tracks player IDs, current scores, and structural constraints.
+- `Move.ts`: Declares and parses the 7 legal types of actions a player can execute according to official Seep rules (e.g., Bidding, Throwing, Scattering, or building Houses).
+- `Game.ts`: The main state machine. It ingests an action, verifies it against the rules, and computes the absolute next frame of the game board deterministically.
+
+### 4. zk-seep-frontend/src/services/ (The Network & ZK Link)
+This directory acts as the connective tissue, handling real-time data streaming and off-loading complex mathematical proof generation.
+- `peerService.ts`: This implements the game's P2P multiplayer architecture. It operates in two modes:
+  - **Local/Same-device:** Uses the browser's BroadcastChannel API to instantly synchronize state between two browser windows with zero latency.
+  - **Online:** Uses PeerJS (WebRTC) backed by STUN/TURN servers to establish direct, low-latency communication channels between separate computers anywhere on the web.
+- `zkProofService.ts`: Communicates directly with the client-side Barretenberg compiler (bb.js). When the UI triggers a hidden-card verification, this service feeds the inputs into the compiled Noir JSON artifacts, spins up a WebWorker to calculate the cryptography locally, and outputs the raw proof string.
+- `devWalletService.ts`: Handles the game's seamless user experience. Instead of forcing a Freighter wallet popup for every move, it instantiates an automated, ephemeral "Session Wallet" directly inside sessionStorage to quietly auto-sign game transactions behind the scenes.
+
+### 5. scripts/ (The Automation Hub)
+This contains utility scripts executed via Bun to coordinate development workflows and bridge the gap between Rust/Noir and TypeScript.
+- `setup.ts` & `build.ts`: Automates compiling the Soroban contracts into WASM and generating the TypeScript bindings for frontend usage.
+- `deploy.ts`, `deploy-localnet.sh`, `deploy-testnet.sh`: Scripts dedicated to deploying the freshly baked WASM binaries onto local or testnet Stellar network instances, mapping initial contract addresses, and establishing initial configurations.
+- `bindings.ts`: Generates and syncs TypeScript interfaces so that typing structures match across Noir circuit parameters, Soroban contracts, and frontend states.
